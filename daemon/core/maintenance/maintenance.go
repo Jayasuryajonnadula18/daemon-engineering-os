@@ -20,27 +20,28 @@ type EnvDriftInfo struct {
 	MissingExampleFile bool     `json:"missing_example_file"`
 	MissingKeysInEnv   []string `json:"missing_keys_in_env"`
 	MissingKeysInEx    []string `json:"missing_keys_in_example"`
+	MultiEnvNotes      []string `json:"multi_env_notes,omitempty"`
 }
 
 // DepDriftInfo details dependency lockfile vs install drift.
 type DepDriftInfo struct {
-	ManifestFile  string    `json:"manifest_file"`
-	LockFile      string    `json:"lock_file"`
-	InstallDir    string    `json:"install_dir"`
-	ManifestTime  time.Time `json:"manifest_time"`
-	LockTime      time.Time `json:"lock_time"`
-	InstallTime   time.Time `json:"install_time"`
-	DriftType     string    `json:"drift_type"`
-	SuggestCmd    string    `json:"suggest_cmd"`
+	ManifestFile string    `json:"manifest_file"`
+	LockFile     string    `json:"lock_file"`
+	InstallDir   string    `json:"install_dir"`
+	ManifestTime time.Time `json:"manifest_time,omitempty"`
+	LockTime     time.Time `json:"lock_time,omitempty"`
+	InstallTime  time.Time `json:"install_time,omitempty"`
+	DriftType    string    `json:"drift_type"`
+	SuggestCmd   string    `json:"suggest_cmd"`
 }
 
 // DockerDanglingItem describes an exited container or dangling image layer.
 type DockerDanglingItem struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"` // "container" or "image"
-	Name      string `json:"name"`
-	Size      string `json:"size"`
-	Age       string `json:"age"`
+	ID         string `json:"id"`
+	Type       string `json:"type"` // "container" or "image"
+	Name       string `json:"name"`
+	Size       string `json:"size"`
+	Age        string `json:"age"`
 	Reversible bool   `json:"reversible"`
 }
 
@@ -51,15 +52,23 @@ type BrokenSymlinkInfo struct {
 	Reason string `json:"reason"`
 }
 
-// CoreFourReport holds the exact findings for the 4 core maintenance checks.
+// ConflictMarkerInfo describes an uncommitted merge conflict marker found in a file.
+type ConflictMarkerInfo struct {
+	Path       string `json:"path"`
+	LineNumber int    `json:"line_number"`
+	Marker     string `json:"marker"`
+}
+
+// CoreFourReport holds the exact findings for the maintenance checks.
 type CoreFourReport struct {
-	CheckedDir       string                `json:"checked_dir"`
-	EnvDrift         *EnvDriftInfo         `json:"env_drift,omitempty"`
-	DepDrift         []DepDriftInfo        `json:"dep_drift,omitempty"`
-	DockerDangling   []DockerDanglingItem  `json:"docker_dangling,omitempty"`
-	BrokenSymlinks   []BrokenSymlinkInfo   `json:"broken_symlinks,omitempty"`
-	RepairsExecuted  []string              `json:"repairs_executed,omitempty"`
-	HasDrift         bool                  `json:"has_drift"`
+	CheckedDir      string               `json:"checked_dir"`
+	EnvDrift        *EnvDriftInfo        `json:"env_drift,omitempty"`
+	DepDrift        []DepDriftInfo       `json:"dep_drift,omitempty"`
+	DockerDangling  []DockerDanglingItem `json:"docker_dangling,omitempty"`
+	BrokenSymlinks  []BrokenSymlinkInfo  `json:"broken_symlinks,omitempty"`
+	ConflictMarkers []ConflictMarkerInfo `json:"conflict_markers,omitempty"`
+	RepairsExecuted []string             `json:"repairs_executed,omitempty"`
+	HasDrift        bool                 `json:"has_drift"`
 }
 
 // MaintenanceEngine coordinates workspace maintenance.
@@ -104,13 +113,25 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	envKeys, hasEnv := ExtractKeysFromFile(envPath)
 	exampleKeys, hasExample := ExtractKeysFromFile(examplePath)
 
+	var multiEnvNotes []string
+	// Scenario 1.8: Note presence of .env.local / .env.production without failing
+	for _, envVariant := range []string{".env.local", ".env.staging", ".env.production"} {
+		if _, err := os.Stat(filepath.Join(root, envVariant)); err == nil {
+			multiEnvNotes = append(multiEnvNotes, fmt.Sprintf("Skipped %s (v1 scope checks .env vs .env.example only)", envVariant))
+		}
+	}
+
 	if !hasEnv && !hasExample {
+		if len(multiEnvNotes) > 0 {
+			return &EnvDriftInfo{MultiEnvNotes: multiEnvNotes}, true
+		}
 		return nil, false
 	}
 
 	info := &EnvDriftInfo{
 		MissingEnvFile:     !hasEnv,
 		MissingExampleFile: !hasExample,
+		MultiEnvNotes:      multiEnvNotes,
 	}
 
 	envKeyMap := make(map[string]bool)
@@ -123,14 +144,12 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 		exKeyMap[k] = true
 	}
 
-	// Detect keys in .env.example missing from .env
 	for _, k := range exampleKeys {
 		if !envKeyMap[k] {
 			info.MissingKeysInEnv = append(info.MissingKeysInEnv, k)
 		}
 	}
 
-	// Detect keys in .env missing from .env.example
 	for _, k := range envKeys {
 		if !exKeyMap[k] {
 			info.MissingKeysInEx = append(info.MissingKeysInEx, k)
@@ -144,9 +163,42 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	return info, true
 }
 
-// CheckDependencyDrift detects timestamp mismatches between manifest, lockfile, and install dir.
+// CheckDependencyDrift detects timestamp mismatches, missing venvs, and conflicting lockfiles.
 func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	var drifts []DepDriftInfo
+
+	// Scenario 2.12: Ambiguous Multiple Lockfiles Check
+	hasNpmLock := false
+	hasYarnLock := false
+	hasPnpmLock := false
+	if _, err := os.Stat(filepath.Join(root, "package-lock.json")); err == nil {
+		hasNpmLock = true
+	}
+	if _, err := os.Stat(filepath.Join(root, "yarn.lock")); err == nil {
+		hasYarnLock = true
+	}
+	if _, err := os.Stat(filepath.Join(root, "pnpm-lock.yaml")); err == nil {
+		hasPnpmLock = true
+	}
+
+	lockCount := 0
+	if hasNpmLock {
+		lockCount++
+	}
+	if hasYarnLock {
+		lockCount++
+	}
+	if hasPnpmLock {
+		lockCount++
+	}
+
+	if lockCount > 1 {
+		drifts = append(drifts, DepDriftInfo{
+			ManifestFile: "package.json",
+			DriftType:    "ambiguous package manager state: multiple conflicting lockfiles detected in same directory",
+			SuggestCmd:   "remove unneeded lockfile (keep only package-lock.json, yarn.lock, or pnpm-lock.yaml)",
+		})
+	}
 
 	// Check Node.js: package.json vs package-lock.json vs node_modules
 	pkgPath := filepath.Join(root, "package.json")
@@ -158,7 +210,6 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	modStat, modErr := os.Stat(modulesPath)
 
 	if pkgErr == nil && lockErr == nil {
-		// Lockfile newer than node_modules (someone pulled lockfile change but never ran npm install)
 		if modErr == nil && lockStat.ModTime().After(modStat.ModTime()) {
 			drifts = append(drifts, DepDriftInfo{
 				ManifestFile: "package.json",
@@ -170,7 +221,6 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 				SuggestCmd:   "npm install",
 			})
 		}
-		// package.json newer than lockfile (package added/updated but lockfile not updated)
 		if pkgStat.ModTime().After(lockStat.ModTime()) {
 			drifts = append(drifts, DepDriftInfo{
 				ManifestFile: "package.json",
@@ -182,7 +232,6 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 			})
 		}
 	} else if pkgErr == nil && modErr != nil {
-		// package.json present but node_modules missing
 		drifts = append(drifts, DepDriftInfo{
 			ManifestFile: "package.json",
 			InstallDir:   "node_modules",
@@ -210,6 +259,37 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 		}
 	}
 
+	// Scenario 2.6 & 2.7: Python requirements / Poetry check
+	reqPath := filepath.Join(root, "requirements.txt")
+	pyProjPath := filepath.Join(root, "pyproject.toml")
+	poetryLockPath := filepath.Join(root, "poetry.lock")
+
+	_, hasReq := os.Stat(reqPath)
+	_, hasPyProj := os.Stat(pyProjPath)
+	_, hasPoetryLock := os.Stat(poetryLockPath)
+
+	if hasReq == nil || hasPyProj == nil {
+		// Check for virtualenv (.venv, venv, env)
+		hasVenv := false
+		for _, vName := range []string{".venv", "venv", "env"} {
+			if _, err := os.Stat(filepath.Join(root, vName)); err == nil {
+				hasVenv = true
+				break
+			}
+		}
+		if !hasVenv {
+			suggestCmd := "python -m venv .venv && source .venv/bin/activate"
+			if hasPyProj == nil && hasPoetryLock == nil {
+				suggestCmd = "poetry install"
+			}
+			drifts = append(drifts, DepDriftInfo{
+				ManifestFile: filepath.Base(root),
+				DriftType:    "no virtual environment detected (.venv/venv missing)",
+				SuggestCmd:   suggestCmd,
+			})
+		}
+	}
+
 	return drifts, len(drifts) > 0
 }
 
@@ -217,7 +297,6 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) {
 	var items []DockerDanglingItem
 
-	// 1. Exited containers older than 24 hours
 	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.ID}}|{{.Names}}|{{.CreatedAt}}|{{.Status}}")
 	if output, err := cmd.Output(); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -225,7 +304,6 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) 
 			parts := strings.Split(l, "|")
 			if len(parts) >= 4 {
 				cID, cName, cCreated, cStatus := parts[0], parts[1], parts[2], parts[3]
-				// Only flag if exited > 24 hours
 				if strings.Contains(cStatus, "Exited") && (strings.Contains(cStatus, "days") || strings.Contains(cStatus, "weeks") || strings.Contains(cStatus, "hours")) {
 					items = append(items, DockerDanglingItem{
 						ID:         cID,
@@ -239,7 +317,6 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) 
 		}
 	}
 
-	// 2. Dangling images > 10MB
 	imgCmd := exec.CommandContext(ctx, "docker", "images", "-f", "dangling=true", "--format", "{{.ID}}|{{.Size}}|{{.CreatedAt}}")
 	if imgOut, err := imgCmd.Output(); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(imgOut)), "\n")
@@ -247,7 +324,6 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) 
 			parts := strings.Split(l, "|")
 			if len(parts) >= 2 {
 				imgID, imgSize := parts[0], parts[1]
-				// Parse size > 10MB
 				if strings.Contains(imgSize, "MB") || strings.Contains(imgSize, "GB") {
 					items = append(items, DockerDanglingItem{
 						ID:         imgID,
@@ -276,12 +352,10 @@ func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, bool) {
 			return filepath.SkipDir
 		}
 
-		// Use Lstat to detect symlink
 		lst, err := os.Lstat(path)
 		if err == nil && (lst.Mode()&os.ModeSymlink != 0) {
 			target, rErr := os.Readlink(path)
 			if rErr == nil {
-				// Check if target exists
 				absTarget := target
 				if !filepath.IsAbs(target) {
 					absTarget = filepath.Join(filepath.Dir(path), target)
@@ -302,7 +376,50 @@ func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, bool) {
 	return broken, len(broken) > 0
 }
 
-// RunCoreFourMaintenance evaluates the 4 core checks and returns strict empirical evidence.
+// CheckMergeConflictMarkers scans tracked text files for uncommitted conflict markers.
+func CheckMergeConflictMarkers(root string) ([]ConflictMarkerInfo, bool) {
+	var markers []ConflictMarkerInfo
+
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			if info != nil && (info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == ".daemon") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Skip binary files by extension
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".png" || ext == ".jpg" || ext == ".exe" || ext == ".db" || ext == ".zip" {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+
+		lineNo := 1
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "<<<<<<< HEAD") || strings.HasPrefix(line, ">>>>>>> ") {
+				relPath, _ := filepath.Rel(root, path)
+				markers = append(markers, ConflictMarkerInfo{
+					Path:       relPath,
+					LineNumber: lineNo,
+					Marker:     strings.TrimSpace(line),
+				})
+				break
+			}
+			lineNo++
+		}
+		return nil
+	})
+
+	return markers, len(markers) > 0
+}
+
+// RunCoreFourMaintenance evaluates the core checks and returns strict empirical evidence.
 func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFix bool) (*CoreFourReport, error) {
 	root, err := os.Getwd()
 	if err != nil {
@@ -313,35 +430,34 @@ func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFi
 		CheckedDir: root,
 	}
 
-	// 1. Env check
 	if envInfo, ok := CheckEnvironmentDrift(root); ok {
 		report.EnvDrift = envInfo
 		report.HasDrift = true
 	}
 
-	// 2. Dependency check
 	if depInfo, ok := CheckDependencyDrift(root); ok {
 		report.DepDrift = depInfo
 		report.HasDrift = true
 	}
 
-	// 3. Docker check
 	if dockerItems, ok := CheckDockerDanglingState(ctx); ok {
 		report.DockerDangling = dockerItems
 		report.HasDrift = true
 	}
 
-	// 4. Symlinks check
 	if symlinkItems, ok := CheckBrokenSymlinksAndReferences(root); ok {
 		report.BrokenSymlinks = symlinkItems
 		report.HasDrift = true
 	}
 
-	// Apply self-healing under explicit --apply flag
+	if conflictItems, ok := CheckMergeConflictMarkers(root); ok {
+		report.ConflictMarkers = conflictItems
+		report.HasDrift = true
+	}
+
 	if applyFix && report.HasDrift {
 		dec, policyErr := me.policyEngine.Evaluate(ctx, "workspace_self_healing", "all")
 		if policyErr == nil && (dec == policies.DecAllow || dec == policies.DecConfirm) {
-			// Fix A: Generate missing .env.example if missing
 			if report.EnvDrift != nil {
 				if report.EnvDrift.MissingExampleFile && !report.EnvDrift.MissingEnvFile {
 					envPath := filepath.Join(root, ".env")
@@ -370,7 +486,6 @@ func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFi
 				}
 			}
 
-			// Fix B: Prune Docker resources only if --apply is passed
 			if len(report.DockerDangling) > 0 {
 				var containerIDs []string
 				for _, d := range report.DockerDangling {

@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	engContext "daemon/core/context"
 	"daemon/core/maintenance"
@@ -16,24 +17,23 @@ var (
 	maintainFixFlag    bool
 	maintainDryRunFlag bool
 	maintainJsonFlag   bool
+	maintainCiFlag     bool
 )
 
 var maintainCmd = &cobra.Command{
 	Use:     "maintain",
 	Aliases: []string{"care", "health"},
 	Short:   "Perform Core Four Workspace Maintenance & Health Analysis",
-	Long: `Daemon Maintenance Engine (Pillar 24) — Core Four Checks:
+	Long: `Daemon Maintenance Engine (Pillar 24) — Core Four & Full Catalog Checks:
   1. Missing / Misconfigured .env vs .env.example (Key presence strictly, zero values)
-  2. Stale / Drifted Dependencies (Lockfile vs install timestamps)
+  2. Stale / Drifted Dependencies (Lockfiles, Python venvs, conflicting lockfiles)
   3. Dangling Docker State (Exited containers >24h, unreferenced images >10MB)
-  4. Broken Symlinks & Dead References (Repo symlinks pointing to non-existent targets)
+  4. Broken Symlinks & Uncommitted Conflict Markers (Repo symlinks and merge markers)
 
-Strict Guardrails Enforced:
-  • Never modifies .env values
-  • Never auto-installs dependencies (suggests exact shell command)
-  • Never prunes Docker without --apply and listed inventory
-  • Never touches files outside current project directory
-  • Local-only checks (zero unrequested network calls)`,
+Operating Modes:
+  • On-Demand Mode: 'daemon maintain'
+  • CI Gate Mode:    'daemon maintain --ci' (exits with non-zero code on drift)
+  • Apply Repairs:   'daemon maintain --apply'`,
 	Run: func(cmd *cobra.Command, args []string) {
 		applyFix := maintainApplyFlag || maintainFixFlag
 
@@ -44,6 +44,9 @@ Strict Guardrails Enforced:
 		report, err := me.RunCoreFourMaintenance(cmd.Context(), applyFix)
 		if err != nil {
 			fmt.Printf("❌ Maintenance Error: %v\n", err)
+			if maintainCiFlag {
+				os.Exit(1)
+			}
 			return
 		}
 
@@ -51,9 +54,15 @@ Strict Guardrails Enforced:
 			data, jsonErr := json.MarshalIndent(report, "", "  ")
 			if jsonErr != nil {
 				fmt.Printf("❌ JSON Error: %v\n", jsonErr)
+				if maintainCiFlag {
+					os.Exit(1)
+				}
 				return
 			}
 			fmt.Println(string(data))
+			if maintainCiFlag && report.HasDrift {
+				os.Exit(1)
+			}
 			return
 		}
 
@@ -64,7 +73,7 @@ Strict Guardrails Enforced:
 		}
 
 		fmt.Println("================================================================================")
-		fmt.Println("🛠️  DAEMON MAINTENANCE ENGINE — CORE FOUR AUDIT")
+		fmt.Println("🛠️  DAEMON MAINTENANCE ENGINE — WORKSPACE AUDIT")
 		fmt.Println("================================================================================")
 		fmt.Printf("Checked Directory: %s\n\n", report.CheckedDir)
 
@@ -91,13 +100,16 @@ Strict Guardrails Enforced:
 					fmt.Printf("   • What was found:   ⚠️ Keys present in .env but missing in .env.example: %v\n", report.EnvDrift.MissingKeysInEx)
 				}
 			}
+			for _, note := range report.EnvDrift.MultiEnvNotes {
+				fmt.Printf("   • Note:             %s\n", note)
+			}
 			fmt.Println("   • Safety/Reversible: Safe & Reversible (Generates/updates key templates without touching values)")
 			fmt.Println()
 		}
 
 		// 2. Check: Dependency Drift
 		if len(report.DepDrift) > 0 {
-			fmt.Println("2️⃣  DEPENDENCY DRIFT CHECK (Lockfile vs Install Directory)")
+			fmt.Println("2️⃣  DEPENDENCY DRIFT CHECK (Lockfiles & Environment Integrity)")
 			for _, dep := range report.DepDrift {
 				fmt.Printf("   • What was checked: %s, %s, %s\n", dep.ManifestFile, dep.LockFile, dep.InstallDir)
 				fmt.Printf("   • What was found:   ⚠️ Dependency Drift: %s\n", dep.DriftType)
@@ -143,6 +155,16 @@ Strict Guardrails Enforced:
 			fmt.Println()
 		}
 
+		// 5. Check: Conflict Markers
+		if len(report.ConflictMarkers) > 0 {
+			fmt.Println("5️⃣  UNCOMMITTED MERGE CONFLICT MARKERS CHECK")
+			fmt.Println("   • What was checked: Tracked repository text files")
+			for _, cm := range report.ConflictMarkers {
+				fmt.Printf("   • What was found:   ⚠️ Conflict Marker in '%s' at line %d: %s\n", cm.Path, cm.LineNumber, cm.Marker)
+			}
+			fmt.Println()
+		}
+
 		// Repairs Executed Output
 		if len(report.RepairsExecuted) > 0 {
 			fmt.Println("⚡ REPAIRS EXECUTED (--apply mode):")
@@ -153,6 +175,10 @@ Strict Guardrails Enforced:
 		}
 
 		fmt.Println("================================================================================")
+
+		if maintainCiFlag && report.HasDrift {
+			os.Exit(1)
+		}
 	},
 }
 
@@ -161,6 +187,7 @@ func init() {
 	maintainCmd.Flags().BoolVar(&maintainFixFlag, "fix", false, "Alias for --apply")
 	maintainCmd.Flags().BoolVar(&maintainDryRunFlag, "dry-run", false, "Preview maintenance operations without making changes")
 	maintainCmd.Flags().BoolVar(&maintainJsonFlag, "json", false, "Output machine-readable JSON format")
+	maintainCmd.Flags().BoolVar(&maintainCiFlag, "ci", false, "CI gate mode: exits with non-zero status code if drift detected")
 
 	rootCmd.AddCommand(maintainCmd)
 }
