@@ -29,15 +29,16 @@ function getOutputChannel(name) {
     return outputChannels[name];
 }
 
-function getPassword(callback) {
+function getPassword(callback, silent = false) {
     if (masterPasswordCache) {
-        callback(masterPasswordCache);
+        updateStatusBar('active');
+        if (callback) callback(masterPasswordCache);
         return;
     }
     if (process.env.DAEMON_PASSWORD) {
         masterPasswordCache = process.env.DAEMON_PASSWORD;
         updateStatusBar('active');
-        callback(masterPasswordCache);
+        if (callback) callback(masterPasswordCache);
         return;
     }
     // Query daemon token dynamically from OS Keyring via binary
@@ -48,23 +49,35 @@ function getPassword(callback) {
             if (match && match[1]) {
                 masterPasswordCache = match[1];
                 updateStatusBar('active');
-                callback(masterPasswordCache);
+                if (callback) callback(masterPasswordCache);
                 return;
             }
         }
-        // Fallback: prompt user if keyring fetch fails
-        vscode.window.showInputBox({
-            prompt: "Daemon Master Password / Token",
-            password: true,
-            placeHolder: "Enter your OS Keyring master token (run 'daemon token' to view)"
-        }).then(pwd => {
-            if (pwd) {
-                masterPasswordCache = pwd;
+        // If binary works locally with auto-auth, mark active
+        cp.exec(`"${binaryPath}" version`, (vErr) => {
+            if (!vErr) {
                 updateStatusBar('active');
-                callback(pwd);
-            } else {
-                vscode.window.showErrorMessage("Daemon: Unauthorized — token required.");
+                if (callback) callback("");
+                return;
             }
+            if (silent) {
+                updateStatusBar('locked');
+                return;
+            }
+            // Fallback: prompt user if keyring fetch fails
+            vscode.window.showInputBox({
+                prompt: "Daemon Master Password / Token",
+                password: true,
+                placeHolder: "Enter your OS Keyring master token (run 'daemon token' to view)"
+            }).then(pwd => {
+                if (pwd) {
+                    masterPasswordCache = pwd;
+                    updateStatusBar('active');
+                    if (callback) callback(pwd);
+                } else {
+                    vscode.window.showErrorMessage("Daemon: Unauthorized — token required.");
+                }
+            });
         });
     });
 }
@@ -75,9 +88,12 @@ function runDaemonCommand(channelName, args, password, inputPrompt) {
     channel.appendLine(`\n>>> daemon ${args.join(' ')}\n`);
 
     const binaryPath = getBinaryPath();
-    const fullArgs = [...args, '--password', password];
+    const fullArgs = [...args];
+    if (password) {
+        fullArgs.push('--password', password);
+    }
     const proc = cp.spawn(binaryPath, fullArgs, {
-        env: { ...process.env, DAEMON_PASSWORD: password }
+        env: { ...process.env, DAEMON_PASSWORD: password || process.env.DAEMON_PASSWORD || "" }
     });
 
     proc.stdout.on('data', d => channel.append(d.toString()));
@@ -107,8 +123,13 @@ function activate(context) {
 
     // Status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    updateStatusBar('locked');
+    statusBarItem.text = '$(pulse) Daemon: Active';
+    statusBarItem.tooltip = 'Daemon Engineering OS is active';
+    statusBarItem.show();
     context.subscriptions.push(statusBarItem);
+
+    // Auto-check authentication silently on startup to set status bar state
+    getPassword(null, true);
 
     // Command definitions: [commandId, channelName, cliArgs, requiresInput]
     const commands = [
