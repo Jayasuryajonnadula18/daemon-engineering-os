@@ -41,7 +41,7 @@ func (d *dummyMemoryStore) GetDeployments() ([]domain.Deployment, error) {
 func TestMaintenanceEngine_RunMaintenance(t *testing.T) {
 	ctx := context.Background()
 	ce := engContext.NewContextEngine(&dummyGraphStore{}, &dummyMemoryStore{})
-	pe := policies.NewMemoryPolicyEngine(true) // readOnly allow
+	pe := policies.NewMemoryPolicyEngine(false) // allow mutation for auto-fix test
 
 	me := NewMaintenanceEngine(ce, pe)
 
