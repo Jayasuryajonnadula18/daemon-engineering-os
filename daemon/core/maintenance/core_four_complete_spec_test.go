@@ -300,7 +300,7 @@ func TestSpec_2_9_NoPackageManagerFiles(t *testing.T) {
 func TestSpec_3_1_DockerNotInstalledGracefulSkip(t *testing.T) {
 	ctx := context.Background()
 	// CheckDockerDanglingState executes local docker command and gracefully returns empty list if daemon unavailable
-	items, _ := CheckDockerDanglingState(ctx)
+	items, _, _ := CheckDockerDanglingState(ctx)
 	// Must never panic or crash
 	if items == nil {
 		items = []DockerDanglingItem{}
@@ -319,7 +319,7 @@ func TestSpec_4_1_ValidSymlink(t *testing.T) {
 	_ = os.WriteFile(targetFile, []byte("hello"), 0644)
 	_ = os.Symlink("target.txt", linkFile)
 
-	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	broken, _, ok := CheckBrokenSymlinksAndReferences(tmpDir)
 	if ok || len(broken) > 0 {
 		t.Errorf("4.1 failed: valid symlink must not be flagged")
 	}
@@ -334,7 +334,7 @@ func TestSpec_4_2_BrokenSymlink(t *testing.T) {
 	_ = os.Symlink("target.txt", linkFile)
 	_ = os.Remove(targetFile)
 
-	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	broken, _, ok := CheckBrokenSymlinksAndReferences(tmpDir)
 	if !ok || len(broken) == 0 || broken[0].Target != "target.txt" {
 		t.Fatalf("4.2 failed: broken symlink pointing to missing target must be flagged")
 	}
@@ -346,7 +346,7 @@ func TestSpec_4_7_NodeModulesSymlinkExcluded(t *testing.T) {
 	_ = os.MkdirAll(modDir, 0755)
 	_ = os.Symlink("missing.txt", filepath.Join(modDir, "broken.link"))
 
-	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	broken, _, ok := CheckBrokenSymlinksAndReferences(tmpDir)
 	if ok && len(broken) > 0 {
 		for _, b := range broken {
 			if strings.Contains(b.Path, "node_modules") {
@@ -362,7 +362,7 @@ func TestSpec_4_8_GitDirectorySymlinkExcluded(t *testing.T) {
 	_ = os.MkdirAll(gitDir, 0755)
 	_ = os.Symlink("missing.txt", filepath.Join(gitDir, "broken.link"))
 
-	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	broken, _, ok := CheckBrokenSymlinksAndReferences(tmpDir)
 	if ok && len(broken) > 0 {
 		for _, b := range broken {
 			if strings.Contains(b.Path, ".git") {

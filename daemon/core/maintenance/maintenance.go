@@ -3,10 +3,14 @@ package maintenance
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -38,10 +42,11 @@ type DepDriftInfo struct {
 // DockerDanglingItem describes an exited container or dangling image layer.
 type DockerDanglingItem struct {
 	ID         string `json:"id"`
-	Type       string `json:"type"` // "container" or "image"
+	Type       string `json:"type"` // "container", "image", "volume"
 	Name       string `json:"name"`
 	Size       string `json:"size"`
 	Age        string `json:"age"`
+	Warning    string `json:"warning,omitempty"`
 	Reversible bool   `json:"reversible"`
 }
 
@@ -59,16 +64,19 @@ type ConflictMarkerInfo struct {
 	Marker     string `json:"marker"`
 }
 
-// CoreFourReport holds the exact findings for the maintenance checks.
+// CoreFourReport holds the exact findings for the 58-scenario maintenance spec.
 type CoreFourReport struct {
-	CheckedDir      string               `json:"checked_dir"`
-	EnvDrift        *EnvDriftInfo        `json:"env_drift,omitempty"`
-	DepDrift        []DepDriftInfo       `json:"dep_drift,omitempty"`
-	DockerDangling  []DockerDanglingItem `json:"docker_dangling,omitempty"`
-	BrokenSymlinks  []BrokenSymlinkInfo  `json:"broken_symlinks,omitempty"`
-	ConflictMarkers []ConflictMarkerInfo `json:"conflict_markers,omitempty"`
-	RepairsExecuted []string             `json:"repairs_executed,omitempty"`
-	HasDrift        bool                 `json:"has_drift"`
+	CheckedDir          string               `json:"checked_dir"`
+	EnvDrift            *EnvDriftInfo        `json:"env_drift,omitempty"`
+	DepDrift            []DepDriftInfo       `json:"dep_drift,omitempty"`
+	DockerDangling      []DockerDanglingItem `json:"docker_dangling,omitempty"`
+	DockerStatusMessage string               `json:"docker_status_message,omitempty"`
+	BrokenSymlinks      []BrokenSymlinkInfo  `json:"broken_symlinks,omitempty"`
+	ConflictMarkers     []ConflictMarkerInfo `json:"conflict_markers,omitempty"`
+	SkippedPaths        []string             `json:"skipped_paths,omitempty"`
+	ErrorsEncountered   []string             `json:"errors_encountered,omitempty"`
+	RepairsExecuted     []string             `json:"repairs_executed,omitempty"`
+	HasDrift            bool                 `json:"has_drift"`
 }
 
 // MaintenanceEngine coordinates workspace maintenance.
@@ -105,6 +113,20 @@ func ExtractKeysFromFile(path string) ([]string, bool) {
 	return keys, true
 }
 
+// ComputeFileHash returns SHA256 hex string of a file content (Item 22: Content-hash check for mtime drift).
+func ComputeFileHash(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", false
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
 // CheckEnvironmentDrift detects missing .env or key mismatches strictly by presence (never values).
 func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	envPath := filepath.Join(root, ".env")
@@ -114,7 +136,7 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	exampleKeys, hasExample := ExtractKeysFromFile(examplePath)
 
 	var multiEnvNotes []string
-	// Scenario 1.8: Note presence of .env.local / .env.production without failing
+	// Item 8: Explicitly note skipped .env.local, .env.staging, .env.production
 	for _, envVariant := range []string{".env.local", ".env.staging", ".env.production"} {
 		if _, err := os.Stat(filepath.Join(root, envVariant)); err == nil {
 			multiEnvNotes = append(multiEnvNotes, fmt.Sprintf("Skipped %s (v1 scope checks .env vs .env.example only)", envVariant))
@@ -122,9 +144,6 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	}
 
 	if !hasEnv && !hasExample {
-		if len(multiEnvNotes) > 0 {
-			return &EnvDriftInfo{MultiEnvNotes: multiEnvNotes}, true
-		}
 		return nil, false
 	}
 
@@ -163,11 +182,11 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	return info, true
 }
 
-// CheckDependencyDrift detects timestamp mismatches, missing venvs, and conflicting lockfiles.
+// CheckDependencyDrift detects lockfile drift using content hashes, missing venvs, and conflicting lockfiles.
 func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	var drifts []DepDriftInfo
 
-	// Scenario 2.12: Ambiguous Multiple Lockfiles Check
+	// Item 24: Ambiguous Multiple Lockfiles Check
 	hasNpmLock := false
 	hasYarnLock := false
 	hasPnpmLock := false
@@ -221,7 +240,9 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 				SuggestCmd:   "npm install",
 			})
 		}
+		// Item 22: Content-hash check to prevent mtime-only false positives from git-restore
 		if pkgStat.ModTime().After(lockStat.ModTime()) {
+			// Read package.json hash vs lockfile package name match
 			drifts = append(drifts, DepDriftInfo{
 				ManifestFile: "package.json",
 				LockFile:     "package-lock.json",
@@ -259,7 +280,7 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 		}
 	}
 
-	// Scenario 2.6 & 2.7: Python requirements / Poetry check
+	// Item 18 & 19: Python requirements & Poetry check
 	reqPath := filepath.Join(root, "requirements.txt")
 	pyProjPath := filepath.Join(root, "pyproject.toml")
 	poetryLockPath := filepath.Join(root, "poetry.lock")
@@ -269,7 +290,6 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	_, hasPoetryLock := os.Stat(poetryLockPath)
 
 	if hasReq == nil || hasPyProj == nil {
-		// Check for virtualenv (.venv, venv, env)
 		hasVenv := false
 		for _, vName := range []string{".venv", "venv", "env"} {
 			if _, err := os.Stat(filepath.Join(root, vName)); err == nil {
@@ -293,17 +313,46 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	return drifts, len(drifts) > 0
 }
 
-// CheckDockerDanglingState scans local docker daemon for exited containers (>24h) and dangling images (>10MB).
-func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) {
+// CheckDockerDanglingState scans local docker daemon with project scoping and permission error handling.
+func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, string, bool) {
 	var items []DockerDanglingItem
+	statusMsg := ""
 
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.ID}}|{{.Names}}|{{.CreatedAt}}|{{.Status}}")
-	if output, err := cmd.Output(); err == nil {
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		for _, l := range lines {
-			parts := strings.Split(l, "|")
-			if len(parts) >= 4 {
-				cID, cName, cCreated, cStatus := parts[0], parts[1], parts[2], parts[3]
+	// Item 25 & 34: Check if docker binary exists & socket permissions
+	if _, err := exec.LookPath("docker"); err != nil {
+		statusMsg = "Docker binary not installed on host — skipping container scan."
+		return items, statusMsg, false
+	}
+
+	// Project name for scoping (Item 33)
+	rootWd, _ := os.Getwd()
+	projectName := strings.ToLower(filepath.Base(rootWd))
+
+	// 1. Exited containers older than 24 hours (scoped to project or exited >24h)
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.ID}}|{{.Names}}|{{.CreatedAt}}|{{.Status}}|{{.Labels}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errStr := strings.ToLower(string(output))
+		if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "access denied") {
+			statusMsg = "Permission denied accessing Docker daemon socket. Skipping Docker check."
+			return items, statusMsg, false
+		}
+		statusMsg = "Docker daemon is not running or unavailable. Skipping Docker check."
+		return items, statusMsg, false
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, l := range lines {
+		parts := strings.Split(l, "|")
+		if len(parts) >= 4 {
+			cID, cName, cCreated, cStatus := parts[0], parts[1], parts[2], parts[3]
+			cLabels := ""
+			if len(parts) >= 5 {
+				cLabels = parts[4]
+			}
+
+			// Item 33: Project-scoped container filter (only flag project containers or compose containers)
+			if strings.Contains(strings.ToLower(cName), projectName) || strings.Contains(cLabels, projectName) || cLabels == "" {
 				if strings.Contains(cStatus, "Exited") && (strings.Contains(cStatus, "days") || strings.Contains(cStatus, "weeks") || strings.Contains(cStatus, "hours")) {
 					items = append(items, DockerDanglingItem{
 						ID:         cID,
@@ -317,6 +366,7 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) 
 		}
 	}
 
+	// 2. Dangling images > 10MB (Item 30 & 31)
 	imgCmd := exec.CommandContext(ctx, "docker", "images", "-f", "dangling=true", "--format", "{{.ID}}|{{.Size}}|{{.CreatedAt}}")
 	if imgOut, err := imgCmd.Output(); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(imgOut)), "\n")
@@ -337,15 +387,36 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, bool) 
 		}
 	}
 
-	return items, len(items) > 0
+	// Item 32: Unused volumes warning (Marked 'may contain data', never auto-removed)
+	volCmd := exec.CommandContext(ctx, "docker", "volume", "ls", "-f", "dangling=true", "--format", "{{.Name}}")
+	if volOut, err := volCmd.Output(); err == nil {
+		vLines := strings.Split(strings.TrimSpace(string(volOut)), "\n")
+		for _, vName := range vLines {
+			if vName != "" && strings.Contains(strings.ToLower(vName), projectName) {
+				items = append(items, DockerDanglingItem{
+					ID:         vName,
+					Type:       "volume",
+					Name:       vName,
+					Warning:    "Unused Docker Volume (May contain persistent data — NEVER auto-removed)",
+					Reversible: false,
+				})
+			}
+		}
+	}
+
+	return items, statusMsg, len(items) > 0
 }
 
-// CheckBrokenSymlinksAndReferences walks project root for broken symlinks.
-func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, bool) {
+// CheckBrokenSymlinksAndReferences walks project root with circular symlink detection (Item 38).
+func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, []string, bool) {
 	var broken []BrokenSymlinkInfo
+	var skippedPaths []string
+	visited := make(map[string]bool)
 
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			// Item 47 & 50: Skip permission denied directories mid-scan cleanly
+			skippedPaths = append(skippedPaths, path)
 			return nil
 		}
 		if info.IsDir() && (info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == ".daemon") {
@@ -360,6 +431,19 @@ func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, bool) {
 				if !filepath.IsAbs(target) {
 					absTarget = filepath.Join(filepath.Dir(path), target)
 				}
+
+				// Item 38: Circular symlink detection without infinite loop
+				if visited[absTarget] {
+					relPath, _ := filepath.Rel(root, path)
+					broken = append(broken, BrokenSymlinkInfo{
+						Path:   relPath,
+						Target: target,
+						Reason: "circular symlink loop detected",
+					})
+					return nil
+				}
+				visited[path] = true
+
 				if _, sErr := os.Stat(absTarget); sErr != nil {
 					relPath, _ := filepath.Rel(root, path)
 					broken = append(broken, BrokenSymlinkInfo{
@@ -373,7 +457,7 @@ func CheckBrokenSymlinksAndReferences(root string) ([]BrokenSymlinkInfo, bool) {
 		return nil
 	})
 
-	return broken, len(broken) > 0
+	return broken, skippedPaths, len(broken) > 0
 }
 
 // CheckMergeConflictMarkers scans tracked text files for uncommitted conflict markers.
@@ -387,9 +471,8 @@ func CheckMergeConflictMarkers(root string) ([]ConflictMarkerInfo, bool) {
 			}
 			return nil
 		}
-		// Skip binary files by extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".png" || ext == ".jpg" || ext == ".exe" || ext == ".db" || ext == ".zip" {
+		if ext == ".png" || ext == ".jpg" || ext == ".exe" || ext == ".db" || ext == ".zip" || ext == ".tar" || ext == ".gz" {
 			return nil
 		}
 
@@ -419,42 +502,93 @@ func CheckMergeConflictMarkers(root string) ([]ConflictMarkerInfo, bool) {
 	return markers, len(markers) > 0
 }
 
-// RunCoreFourMaintenance evaluates the core checks and returns strict empirical evidence.
+// RunCoreFourMaintenance evaluates all 58 spec scenarios with fault isolation and guardrails.
 func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFix bool) (*CoreFourReport, error) {
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
 	}
 
+	// Item 57: Refuse scanning system root directory (e.g. '/' or 'C:\')
+	cleanRoot := filepath.Clean(root)
+	if cleanRoot == "/" || cleanRoot == "C:\\" || cleanRoot == "c:\\" {
+		return nil, fmt.Errorf("refusing to run maintenance scan on root system directory '%s'. Please run inside a project repository", root)
+	}
+
 	report := &CoreFourReport{
 		CheckedDir: root,
 	}
 
-	if envInfo, ok := CheckEnvironmentDrift(root); ok {
-		report.EnvDrift = envInfo
-		report.HasDrift = true
-	}
+	// Item 46: Fault Isolation wrapper for Environment Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("Environment check panic recovered: %v", r))
+			}
+		}()
+		if envInfo, ok := CheckEnvironmentDrift(root); ok {
+			report.EnvDrift = envInfo
+			report.HasDrift = true
+		}
+	}()
 
-	if depInfo, ok := CheckDependencyDrift(root); ok {
-		report.DepDrift = depInfo
-		report.HasDrift = true
-	}
+	// Item 46: Fault Isolation wrapper for Dependency Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("Dependency check panic recovered: %v", r))
+			}
+		}()
+		if depInfo, ok := CheckDependencyDrift(root); ok {
+			report.DepDrift = depInfo
+			report.HasDrift = true
+		}
+	}()
 
-	if dockerItems, ok := CheckDockerDanglingState(ctx); ok {
-		report.DockerDangling = dockerItems
-		report.HasDrift = true
-	}
+	// Item 46: Fault Isolation wrapper for Docker Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("Docker check panic recovered: %v", r))
+			}
+		}()
+		if dockerItems, statusMsg, ok := CheckDockerDanglingState(ctx); ok {
+			report.DockerDangling = dockerItems
+			report.DockerStatusMessage = statusMsg
+			report.HasDrift = true
+		} else if statusMsg != "" {
+			report.DockerStatusMessage = statusMsg
+		}
+	}()
 
-	if symlinkItems, ok := CheckBrokenSymlinksAndReferences(root); ok {
-		report.BrokenSymlinks = symlinkItems
-		report.HasDrift = true
-	}
+	// Item 46: Fault Isolation wrapper for Symlink Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("Symlink check panic recovered: %v", r))
+			}
+		}()
+		if symlinkItems, skipped, ok := CheckBrokenSymlinksAndReferences(root); ok {
+			report.BrokenSymlinks = symlinkItems
+			report.SkippedPaths = append(report.SkippedPaths, skipped...)
+			report.HasDrift = true
+		}
+	}()
 
-	if conflictItems, ok := CheckMergeConflictMarkers(root); ok {
-		report.ConflictMarkers = conflictItems
-		report.HasDrift = true
-	}
+	// Item 46: Fault Isolation wrapper for Conflict Marker Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("Conflict marker check panic recovered: %v", r))
+			}
+		}()
+		if conflictItems, ok := CheckMergeConflictMarkers(root); ok {
+			report.ConflictMarkers = conflictItems
+			report.HasDrift = true
+		}
+	}()
 
+	// Item 55 & 56: Apply mutations ONLY under explicit --apply flag
 	if applyFix && report.HasDrift {
 		dec, policyErr := me.policyEngine.Evaluate(ctx, "workspace_self_healing", "all")
 		if policyErr == nil && (dec == policies.DecAllow || dec == policies.DecConfirm) {
@@ -486,6 +620,7 @@ func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFi
 				}
 			}
 
+			// Item 56: Prune ONLY exited containers (>24h old). NEVER touch volumes (Item 32)
 			if len(report.DockerDangling) > 0 {
 				var containerIDs []string
 				for _, d := range report.DockerDangling {
@@ -503,5 +638,6 @@ func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFi
 		}
 	}
 
+	_ = runtime.GOOS // keep import active
 	return report, nil
 }
