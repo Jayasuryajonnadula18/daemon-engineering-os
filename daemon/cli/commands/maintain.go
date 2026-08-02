@@ -39,7 +39,9 @@ You can also invoke this command using its aliases: 'daemon care' or 'daemon hea
 
 		autoFix := maintainFixFlag || maintainAutoFixFlag
 		if maintainDryRunFlag {
+			fmt.Println("================================================================================")
 			fmt.Println("=== [DRY-RUN MODE] Previewing Maintenance Engine operations ===")
+			fmt.Println("================================================================================")
 			autoFix = false
 		}
 
@@ -49,35 +51,52 @@ You can also invoke this command using its aliases: 'daemon care' or 'daemon hea
 
 		rep, err := me.RunMaintenance(cmd.Context(), category, autoFix)
 		if err != nil {
-			fmt.Printf("Error running Maintenance Engine: %v\n", err)
+			fmt.Printf("❌ Error running Maintenance Engine: %v\n", err)
 			return
 		}
 
-		fmt.Println("=== DAEMON MAINTENANCE ENGINE (PILLAR 24) ===")
+		fmt.Println("================================================================================")
+		fmt.Println("🛠️  DAEMON WORKSPACE MAINTENANCE ENGINE (PILLAR 24)")
+		fmt.Println("================================================================================")
 		fmt.Printf("Category:             %s\n", strings.ToUpper(rep.Category))
-		fmt.Printf("Workspace Status:     %s\n", rep.Status)
+		fmt.Printf("Workspace Health:     %s\n", rep.Status)
 		fmt.Printf("Confidence Score:     %d%%\n", rep.ConfidenceScore)
-		fmt.Printf("Estimated Time Saved: %s\n\n", rep.EstimatedTimeSaved)
+		fmt.Printf("Est. Developer Saved: %s\n", rep.EstimatedTimeSaved)
+		fmt.Println("--------------------------------------------------------------------------------")
 
-		fmt.Println("Observation:")
-		fmt.Printf("  • %s\n\n", rep.Observation)
+		fmt.Println("\n🔍 OBSERVATION:")
+		fmt.Printf("  • %s\n", rep.Observation)
 
-		fmt.Println("Evidence:")
+		fmt.Println("\n📋 EVIDENTIARY AUDIT:")
 		for _, ev := range rep.Evidence {
-			fmt.Printf("  ✓ %s\n", ev)
+			fmt.Printf("  %s\n", ev)
 		}
-		fmt.Println()
 
-		fmt.Println("Recommendation:")
-		fmt.Printf("  * %s\n\n", rep.Recommendation)
+		if len(rep.IncidentsFound) > 0 {
+			fmt.Println("\n⚠️  FLAGGED INCIDENTS & WORKSPACE DRIFT:")
+			for _, inc := range rep.IncidentsFound {
+				fmt.Printf("  • [%s] Target: %s — %s\n", strings.ToUpper(inc.Severity), inc.Target, inc.Message)
+			}
+		}
 
-		if len(rep.SelfHealingActions) > 0 {
-			fmt.Println("Self-Healing Actions:")
+		if len(rep.RepairsExecuted) > 0 {
+			fmt.Println("\n⚡ SELF-HEALING REPAIRS EXECUTED:")
+			for _, r := range rep.RepairsExecuted {
+				fmt.Printf("  %s\n", r)
+			}
+		} else if len(rep.SelfHealingActions) > 0 {
+			fmt.Println("\n💡 RECOMMENDED SELF-HEALING ACTIONS:")
 			for _, act := range rep.SelfHealingActions {
 				fmt.Printf("  -> %s\n", act)
 			}
-			fmt.Println()
+			if !autoFix {
+				fmt.Println("\n👉 Run 'daemon maintain --fix' to execute these self-healing actions automatically.")
+			}
 		}
+
+		fmt.Println("\n💡 RECOMMENDATION:")
+		fmt.Printf("  * %s\n", rep.Recommendation)
+		fmt.Println("================================================================================")
 	},
 }
 

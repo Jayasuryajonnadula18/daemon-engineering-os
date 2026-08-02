@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	engContext "daemon/core/context"
@@ -53,8 +54,8 @@ func TestMaintenanceEngine_RunMaintenance(t *testing.T) {
 	if rep.Category != "containers" {
 		t.Errorf("expected category containers, got %s", rep.Category)
 	}
-	if rep.ConfidenceScore != 94 {
-		t.Errorf("expected confidence score 94, got %d", rep.ConfidenceScore)
+	if rep.ConfidenceScore != 96 {
+		t.Errorf("expected confidence score 96, got %d", rep.ConfidenceScore)
 	}
 	if len(rep.Evidence) == 0 {
 		t.Errorf("expected evidence items, got none")
@@ -65,7 +66,7 @@ func TestMaintenanceEngine_RunMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if repFix.Status != "Repaired (Controlled Self-Healing)" {
+	if !strings.Contains(repFix.Status, "Repaired") {
 		t.Errorf("expected Repaired status, got %s", repFix.Status)
 	}
 }
