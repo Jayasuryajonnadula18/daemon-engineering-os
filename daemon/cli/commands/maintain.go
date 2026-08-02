@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 
 	engContext "daemon/core/context"
@@ -14,6 +15,7 @@ var (
 	maintainApplyFlag  bool
 	maintainFixFlag    bool
 	maintainDryRunFlag bool
+	maintainJsonFlag   bool
 )
 
 var maintainCmd = &cobra.Command{
@@ -42,6 +44,16 @@ Strict Guardrails Enforced:
 		report, err := me.RunCoreFourMaintenance(cmd.Context(), applyFix)
 		if err != nil {
 			fmt.Printf("❌ Maintenance Error: %v\n", err)
+			return
+		}
+
+		if maintainJsonFlag {
+			data, jsonErr := json.MarshalIndent(report, "", "  ")
+			if jsonErr != nil {
+				fmt.Printf("❌ JSON Error: %v\n", jsonErr)
+				return
+			}
+			fmt.Println(string(data))
 			return
 		}
 
@@ -148,6 +160,7 @@ func init() {
 	maintainCmd.Flags().BoolVar(&maintainApplyFlag, "apply", false, "Execute approved maintenance repairs and Docker pruning")
 	maintainCmd.Flags().BoolVar(&maintainFixFlag, "fix", false, "Alias for --apply")
 	maintainCmd.Flags().BoolVar(&maintainDryRunFlag, "dry-run", false, "Preview maintenance operations without making changes")
+	maintainCmd.Flags().BoolVar(&maintainJsonFlag, "json", false, "Output machine-readable JSON format")
 
 	rootCmd.AddCommand(maintainCmd)
 }
