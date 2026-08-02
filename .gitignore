@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.DS_Store
+*.exe
+daemon/daemon.exe
+.daemon/
+*.db
+*.log

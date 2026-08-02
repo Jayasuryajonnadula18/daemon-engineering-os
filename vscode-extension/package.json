@@ -1,0 +1,31 @@
+{
+  "name": "daemon-vscode",
+  "displayName": "Daemon Engineering OS",
+  "description": "The Engineering Operating System — Engineering Twin, AI Advisor, Execution Graphs, Maintenance Engine, and Mission Control inside VS Code",
+  "version": "1.0.0",
+  "publisher": "daemon",
+  "icon": "icon.png",
+  "keywords": ["engineering", "devops", "AI", "advisor", "twin", "docker", "kubernetes", "github"],
+  "categories": ["Other", "Debuggers", "SCM Providers"],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "daemon.advise",    "title": "Daemon: Show Advisor Recommendations" },
+      { "command": "daemon.plan",      "title": "Daemon: Generate Execution Plan" },
+      { "command": "daemon.maintain",  "title": "Daemon: Run Workspace Maintenance (Care)" },
+      { "command": "daemon.fix",       "title": "Daemon: Suggest & Execute Fixes" },
+      { "command": "daemon.deploy",    "title": "Daemon: Coordinate Deployment" },
+      { "command": "daemon.graph",     "title": "Daemon: Explore Knowledge Graph" },
+      { "command": "daemon.sync",      "title": "Daemon: Sync Engineering Twin" },
+      { "command": "daemon.doctor",    "title": "Daemon: Run Engineering Doctor" },
+      { "command": "daemon.version",   "title": "Daemon: Show Version & Pillars" },
+      { "command": "daemon.config",    "title": "Daemon: View Configuration" },
+      { "command": "daemon.replay",    "title": "Daemon: Replay Engineering History" },
+      { "command": "daemon.mission",   "title": "Daemon: Launch Mission Control Dashboard" }
+    ]
+  }
+}
