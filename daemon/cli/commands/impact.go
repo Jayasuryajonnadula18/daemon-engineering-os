@@ -12,54 +12,75 @@ var impactCmd = &cobra.Command{
 	Short: "Analyze the dependency impact of changing a specific component",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		node := strings.ToLower(args[0])
+		nodeTarget := strings.ToLower(strings.TrimSpace(args[0]))
 
-		fmt.Printf("=== DEPENDENCY IMPACT ANALYSIS: %s ===\n\n", strings.ToUpper(node))
+		fmt.Printf("=== DEPENDENCY IMPACT ANALYSIS: %s ===\n\n", strings.ToUpper(nodeTarget))
 
-		switch node {
-		case "payments":
-			fmt.Println("Direct Dependents (Consumers):")
-			fmt.Println("  - Orders Service (synchronous REST API)")
-			fmt.Println("  - API Gateway (route mappings)")
-			fmt.Println("\nDirect Dependencies:")
-			fmt.Println("  - Authentication Service (JWT verification)")
-			fmt.Println("  - PostgreSQL Database (orders_db schema)")
-			fmt.Println("\nAffected Infrastructure:")
-			fmt.Println("  - docker-compose: payments-api container")
-			fmt.Println("  - kubernetes: payments-deployment cluster resource")
-			fmt.Println("\nEstimated Risks:")
-			fmt.Println("  - Deployment Risk:            High (Tight coupling with Orders database sync hooks)")
-			fmt.Println("  - Potential Downtime:         Low (With rolling updates configured)")
-			fmt.Println("  - Suggested Rollback Strategy: Quick container image shift revert")
-		case "auth":
-			fmt.Println("Direct Dependents (Consumers):")
-			fmt.Println("  - API Gateway (token extraction)")
-			fmt.Println("  - Orders Service (authorization filters)")
-			fmt.Println("  - Payments Service (JWT parsing)")
-			fmt.Println("\nDirect Dependencies:")
-			fmt.Println("  - Redis (session storage cache)")
-			fmt.Println("\nAffected Infrastructure:")
-			fmt.Println("  - docker-compose: auth-service container")
-			fmt.Println("\nEstimated Risks:")
-			fmt.Println("  - Deployment Risk:            Critical (Single Point of Failure for down-stream auth verification)")
-			fmt.Println("  - Potential Downtime:         Critical (Auth downtime denies access to entire SaaS platform)")
-			fmt.Println("  - Suggested Rollback Strategy: Multi-stage canary route drain")
-		default:
-			fmt.Printf("Analyzing impact for generic node '%s'...\n", node)
-			fmt.Println("Direct Dependents:")
-			fmt.Println("  - API Gateway")
-			fmt.Println("\nDirect Dependencies:")
-			fmt.Println("  - Project Workspace root package")
-			fmt.Println("\nEstimated Risks:")
-			fmt.Println("  - Deployment Risk:            Low")
-			fmt.Println("  - Potential Downtime:         None")
-			fmt.Println("  - Suggested Rollback Strategy: Standard deployment container restart")
+		gs := rt.Container.ResolveGraphStore()
+		allEdges, err := gs.GetEdges()
+		if err != nil {
+			fmt.Printf("Error accessing Knowledge Graph: %v\n", err)
+			return
 		}
+
+		allNodes, _ := gs.GetAllNodes()
+
+		// Real Graph Edge Traversal
+		var directDependents []string // Node is target (other nodes call/depend on target)
+		var directDependencies []string // Target calls/depends on other nodes
+
+		for _, e := range allEdges {
+			fromLower := strings.ToLower(e.FromID)
+			toLower := strings.ToLower(e.ToID)
+
+			if strings.Contains(toLower, nodeTarget) || strings.Contains(strings.ToLower(e.ToType), nodeTarget) {
+				directDependents = append(directDependents, fmt.Sprintf("%s (%s -> %s)", e.FromID, e.FromType, e.Relation))
+			}
+			if strings.Contains(fromLower, nodeTarget) || strings.Contains(strings.ToLower(e.FromType), nodeTarget) {
+				directDependencies = append(directDependencies, fmt.Sprintf("%s (%s -> %s)", e.ToID, e.ToType, e.Relation))
+			}
+		}
+
+		// Calculate Risk Level based on inbound dependent count
+		riskLevel := "Low"
+		switch {
+		case len(directDependents) >= 3:
+			riskLevel = "Critical (Single Point of Failure for down-stream consumers)"
+		case len(directDependents) == 2:
+			riskLevel = "High (Tight coupling with multiple service consumers)"
+		case len(directDependents) == 1:
+			riskLevel = "Medium (Downstream impact on 1 consumer)"
+		}
+
+		fmt.Println("Direct Dependents (Consumers / Inbound Edges):")
+		if len(directDependents) > 0 {
+			for _, dep := range directDependents {
+				fmt.Printf("  • %s\n", dep)
+			}
+		} else {
+			fmt.Println("  (None detected — standalone component or leaf node)")
+		}
+
+		fmt.Println("\nDirect Dependencies (Outbound Edges):")
+		if len(directDependencies) > 0 {
+			for _, dep := range directDependencies {
+				fmt.Printf("  • %s\n", dep)
+			}
+		} else {
+			fmt.Println("  (No outbound graph edges registered for this node)")
+		}
+
+		fmt.Println("\nKnowledge Graph Context:")
+		fmt.Printf("  • Total Tracked Graph Nodes: %d\n", len(allNodes))
+		fmt.Printf("  • Total Relational Edges:    %d\n", len(allEdges))
+
+		fmt.Println("\nDynamic Risk Assessment:")
+		fmt.Printf("  • Calculated Impact Risk:    %s\n", riskLevel)
+		fmt.Printf("  • Inbound Degree Centrality: %d\n", len(directDependents))
+		fmt.Println("  • Rollback Strategy:         Atomic image/container snapshot revert via 'daemon fix --rollback'")
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(impactCmd)
 }
-
-

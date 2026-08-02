@@ -150,17 +150,8 @@ func (s *SQLiteStore) GetNodes(nodeType string) ([]domain.Module, error) {
 	return modules, nil
 }
 
-// EdgeRecord represents a relational link in the graph.
-type EdgeRecord struct {
-	FromType string `json:"from_type"`
-	FromID   string `json:"from_id"`
-	ToType   string `json:"to_type"`
-	ToID     string `json:"to_id"`
-	Relation string `json:"relation"`
-}
-
 // GetEdges returns all relationship edges from the edges table.
-func (s *SQLiteStore) GetEdges() ([]EdgeRecord, error) {
+func (s *SQLiteStore) GetEdges() ([]domain.EdgeRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -171,9 +162,9 @@ func (s *SQLiteStore) GetEdges() ([]EdgeRecord, error) {
 	}
 	defer rows.Close()
 
-	var edges []EdgeRecord
+	var edges []domain.EdgeRecord
 	for rows.Next() {
-		var e EdgeRecord
+		var e domain.EdgeRecord
 		if err := rows.Scan(&e.FromType, &e.FromID, &e.ToType, &e.ToID, &e.Relation); err != nil {
 			return nil, err
 		}

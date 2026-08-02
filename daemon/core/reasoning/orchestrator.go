@@ -2,6 +2,7 @@ package reasoning
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -36,33 +37,10 @@ type OrchestrationPlan struct {
 	Domain           string         `json:"domain"`
 }
 
-// Specialized Orchestrators
-type DeploymentOrchestrator struct{}
-type ArchitectureOrchestrator struct{}
-type WorkspaceOrchestrator struct{}
-type InfrastructureOrchestrator struct{}
-type IncidentResponseOrchestrator struct{}
-type MaintenanceOrchestrator struct{}
-type SecurityOrchestrator struct{}
-type PerformanceOrchestrator struct{}
-type MigrationOrchestrator struct{}
-type DocumentationOrchestrator struct{}
-
 // EngineeringOrchestrator coordinates semantic task mapping.
 type EngineeringOrchestrator struct {
 	contextBuilder *ContextBuilder
 	modelRouter    *ModelRouter
-
-	DeployOrch   *DeploymentOrchestrator
-	ArchOrch     *ArchitectureOrchestrator
-	WorkOrch     *WorkspaceOrchestrator
-	InfraOrch    *InfrastructureOrchestrator
-	IncidentOrch *IncidentResponseOrchestrator
-	MaintOrch    *MaintenanceOrchestrator
-	SecOrch      *SecurityOrchestrator
-	PerfOrch     *PerformanceOrchestrator
-	MigrOrch     *MigrationOrchestrator
-	DocOrch      *DocumentationOrchestrator
 }
 
 // NewEngineeringOrchestrator instantiates an EngineeringOrchestrator.
@@ -70,16 +48,6 @@ func NewEngineeringOrchestrator(cb *ContextBuilder, mr *ModelRouter) *Engineerin
 	return &EngineeringOrchestrator{
 		contextBuilder: cb,
 		modelRouter:    mr,
-		DeployOrch:     &DeploymentOrchestrator{},
-		ArchOrch:       &ArchitectureOrchestrator{},
-		WorkOrch:       &WorkspaceOrchestrator{},
-		InfraOrch:      &InfrastructureOrchestrator{},
-		IncidentOrch:   &IncidentResponseOrchestrator{},
-		MaintOrch:      &MaintenanceOrchestrator{},
-		SecOrch:        &SecurityOrchestrator{},
-		PerfOrch:       &PerformanceOrchestrator{},
-		MigrOrch:       &MigrationOrchestrator{},
-		DocOrch:        &DocumentationOrchestrator{},
 	}
 }
 
@@ -106,79 +74,83 @@ func (eo *EngineeringOrchestrator) Orchestrate(ctx context.Context, intent strin
 
 	recModel := eo.modelRouter.RouteTask(taskType, 2500)
 
-	plan := &OrchestrationPlan{
-		Intent:           intent,
-		Confidence:       94,
-		RequiresApproval: false,
-		ModelUsed:        recModel.ModelName,
-		Domain:           domain,
-		RollbackStrategy: "Stash modified local configurations, clean workspace caches, restart Docker stack.",
+	var nodes []ExecutionNode
+	var edges []ExecutionEdge
+	var risks []string
+
+	// DYNAMIC DAG COMPILATION: Use real workspace services from optCtx
+	nodeCounter := 1
+
+	// Step 1: Add workspace discovery node
+	step1ID := fmt.Sprintf("node-%d", nodeCounter)
+	nodes = append(nodes, ExecutionNode{
+		ID:       step1ID,
+		TaskName: fmt.Sprintf("Verify workspace context & compilation (%d services tracked)", len(optCtx.Services)),
+		Status:   "Completed",
+	})
+	nodeCounter++
+
+	// Step 2: Add dynamic service-specific tasks if services exist
+	if len(optCtx.Services) > 0 {
+		var prevID string = step1ID
+
+		for _, s := range optCtx.Services {
+			sID := fmt.Sprintf("node-%d", nodeCounter)
+			taskLabel := fmt.Sprintf("Verify %s service dependencies & port binding", s.Name)
+			if domain == "Deployment" {
+				taskLabel = fmt.Sprintf("Build & deploy %s container image", s.Name)
+			}
+			nodes = append(nodes, ExecutionNode{
+				ID:       sID,
+				TaskName: taskLabel,
+				Status:   "Pending",
+			})
+			edges = append(edges, ExecutionEdge{From: prevID, To: sID})
+			prevID = sID
+			nodeCounter++
+		}
+
+		// Step 3: Add final verification node
+		finalID := fmt.Sprintf("node-%d", nodeCounter)
+		nodes = append(nodes, ExecutionNode{
+			ID:       finalID,
+			TaskName: fmt.Sprintf("Verify telemetry probes & gateway routing (%s strategy)", domain),
+			Status:   "Pending",
+		})
+		edges = append(edges, ExecutionEdge{From: prevID, To: finalID})
+	} else {
+		// Fallback for empty graph
+		step2ID := fmt.Sprintf("node-%d", nodeCounter)
+		nodes = append(nodes, ExecutionNode{
+			ID:       step2ID,
+			TaskName: "Scan project workspace directory and run 'daemon sync'",
+			Status:   "Pending",
+		})
+		edges = append(edges, ExecutionEdge{From: step1ID, To: step2ID})
 	}
 
-	// Compile DAG Nodes and Edges based on domain
-	switch domain {
-	case "Deployment":
-		plan.RequiresApproval = true
-		plan.Graph = ExecutionGraph{
-			Nodes: []ExecutionNode{
-				{ID: "node-1", TaskName: "Verify workspace compilation", Status: "Pending"},
-				{ID: "node-2", TaskName: "Run test suites in parallel", Status: "Pending"},
-				{ID: "node-3", TaskName: "Build docker base images", Status: "Pending"},
-				{ID: "node-4", TaskName: "Apply schema migrations check", Status: "Pending"},
-				{ID: "node-5", TaskName: "Upgrade replica set deployment", Status: "Pending"},
-				{ID: "node-6", TaskName: "Verify gateway telemetry response", Status: "Pending"},
-			},
-			Edges: []ExecutionEdge{
-				{From: "node-1", To: "node-2"},
-				{From: "node-1", To: "node-3"},
-				{From: "node-2", To: "node-4"},
-				{From: "node-3", To: "node-5"},
-				{From: "node-4", To: "node-5"},
-				{From: "node-5", To: "node-6"},
-			},
+	// Dynamic Risks
+	if domain == "Deployment" {
+		risks = append(risks, "Live deployment risk: requires interactive stdin confirmation for staging/prod target")
+		if len(optCtx.Services) > 1 {
+			risks = append(risks, fmt.Sprintf("Coupling risk: updating %d microservices simultaneously", len(optCtx.Services)))
 		}
-		plan.Risks = []string{
-			"Parallel builds memory exhaustion",
-			"Postgres schema locks during migration checks",
-		}
-		plan.RollbackStrategy = "Revert deployment versions to original replica sets, notify telemetry alerts."
-
-	case "Security":
-		plan.RequiresApproval = true
-		plan.Graph = ExecutionGraph{
-			Nodes: []ExecutionNode{
-				{ID: "node-1", TaskName: "Scan secrets references", Status: "Pending"},
-				{ID: "node-2", TaskName: "Validate config environment variables", Status: "Pending"},
-				{ID: "node-3", TaskName: "Enforce GITHUB_PAT rotation", Status: "Pending"},
-			},
-			Edges: []ExecutionEdge{
-				{From: "node-1", To: "node-3"},
-				{From: "node-2", To: "node-3"},
-			},
-		}
-		plan.Risks = []string{
-			"Access tokens drift keys verification failures",
-		}
-
-	default:
-		// Default Workspace domain DAG
-		plan.Graph = ExecutionGraph{
-			Nodes: []ExecutionNode{
-				{ID: "node-1", TaskName: "Scan workspace topology", Status: "Pending"},
-				{ID: "node-2", TaskName: "Resolve dependency graph drift", Status: "Pending"},
-				{ID: "node-3", TaskName: "Validate compose containers", Status: "Pending"},
-			},
-			Edges: []ExecutionEdge{
-				{From: "node-1", To: "node-2"},
-				{From: "node-1", To: "node-3"},
-			},
-		}
+	} else {
+		risks = append(risks, fmt.Sprintf("Workspace drift risk: %d tracked dependencies across project manifests", len(optCtx.Dependencies)))
 	}
 
 	if len(optCtx.Incidents) > 0 {
-		plan.Confidence -= 12
-		plan.Risks = append(plan.Risks, "Active context alert: workspace health compromised.")
+		risks = append(risks, "Active incident alert: workspace health compromised")
 	}
 
-	return plan, nil
+	return &OrchestrationPlan{
+		Intent:           intent,
+		Graph:            ExecutionGraph{Nodes: nodes, Edges: edges},
+		Confidence:       92,
+		Risks:            risks,
+		RollbackStrategy: "Stash modified local configurations, revert fix snapshot via 'daemon fix --rollback'",
+		RequiresApproval: domain == "Deployment" || domain == "Security",
+		ModelUsed:        recModel.ModelName,
+		Domain:           domain,
+	}, nil
 }

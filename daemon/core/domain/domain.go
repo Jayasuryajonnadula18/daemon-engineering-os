@@ -148,3 +148,12 @@ type Runbook struct {
 	Steps           []string `json:"steps"`
 }
 
+// EdgeRecord represents a relational link in the Knowledge Graph.
+type EdgeRecord struct {
+	FromType string `json:"from_type"`
+	FromID   string `json:"from_id"`
+	ToType   string `json:"to_type"`
+	ToID     string `json:"to_id"`
+	Relation string `json:"relation"`
+}
+

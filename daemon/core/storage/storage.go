@@ -10,6 +10,8 @@ type GraphStore interface {
 	AddNode(nodeType, id, name string, properties map[string]string) error
 	AddEdge(fromType, fromID, toType, toID, relation string) error
 	GetNodes(nodeType string) ([]domain.Module, error)      // maps generic nodes to module structure or list
+	GetAllNodes() ([]domain.Module, error)
+	GetEdges() ([]domain.EdgeRecord, error)
 	GetServices() ([]domain.Service, error)
 	GetDependencies() ([]domain.Dependency, error)
 	GetAPIs() ([]domain.API, error)
