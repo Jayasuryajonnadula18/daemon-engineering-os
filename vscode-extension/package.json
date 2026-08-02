@@ -4,13 +4,14 @@
   "description": "The Engineering Operating System — Engineering Twin, AI Advisor, Execution Graphs, Maintenance Engine, and Mission Control inside VS Code",
   "version": "1.0.0",
   "publisher": "daemon",
-  "icon": "icon.png",
   "keywords": ["engineering", "devops", "AI", "advisor", "twin", "docker", "kubernetes", "github"],
   "categories": ["Other", "Debuggers", "SCM Providers"],
   "engines": {
     "vscode": "^1.75.0"
   },
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "*"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
