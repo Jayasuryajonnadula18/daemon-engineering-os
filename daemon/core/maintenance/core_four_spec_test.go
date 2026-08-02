@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func (d *SpecDummyMemoryStore) GetDeployments() ([]domain.Deployment, error) {
 }
 
 // -----------------------------------------------------------------------------
-// 1. .ENV CHECK SCENARIOS (1.1 - 1.12)
+// SECTION 1: .ENV CHECK SCENARIOS (1.1 - 1.12)
 // -----------------------------------------------------------------------------
 
 func TestEnvCheck_1_1_ExampleExistsEnvMissing(t *testing.T) {
@@ -69,7 +70,7 @@ func TestEnvCheck_1_2_EnvMatchesExample(t *testing.T) {
 	}
 }
 
-func TestEnvCheck_1_3_EnvMissingKeysOnly(t *testing.T) {
+func TestEnvCheck_1_3_EnvMissing2Of5Keys(t *testing.T) {
 	tmpDir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("KEY1=a\nKEY2=b\nKEY3=c\n"), 0644)
 	_ = os.WriteFile(filepath.Join(tmpDir, ".env.example"), []byte("KEY1=\nKEY2=\nKEY3=\nKEY4=\nKEY5=\n"), 0644)
@@ -89,11 +90,8 @@ func TestEnvCheck_1_4_EnvHasExtraKeys(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmpDir, ".env.example"), []byte("KEY1=\nKEY2=\n"), 0644)
 
 	info, ok := CheckEnvironmentDrift(tmpDir)
-	if !ok {
-		// Extra keys in .env do not trigger missing keys in .env
-		if info != nil && len(info.MissingKeysInEnv) > 0 {
-			t.Errorf("1.4: extra keys in .env should not trigger missing keys in env")
-		}
+	if ok && info != nil && len(info.MissingKeysInEnv) > 0 {
+		t.Errorf("1.4: extra keys in .env should not trigger missing keys in env")
 	}
 }
 
@@ -102,7 +100,7 @@ func TestEnvCheck_1_5_NoExampleFileExists(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("PORT=5000\n"), 0644)
 
 	info, ok := CheckEnvironmentDrift(tmpDir)
-	if ok && info != nil && info.MissingKeysInEnv != nil {
+	if ok && info != nil && len(info.MissingKeysInEnv) > 0 {
 		t.Errorf("1.5: no .env.example should not guess missing keys")
 	}
 }
@@ -115,6 +113,20 @@ func TestEnvCheck_1_6_ExampleFileEmpty(t *testing.T) {
 	info, ok := CheckEnvironmentDrift(tmpDir)
 	if ok && info != nil && len(info.MissingKeysInEnv) > 0 {
 		t.Errorf("1.6: empty .env.example expects 0 keys")
+	}
+}
+
+func TestEnvCheck_1_7_EnvEmptyExampleHasKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte(""), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env.example"), []byte("K1=\nK2=\n"), 0644)
+
+	info, ok := CheckEnvironmentDrift(tmpDir)
+	if !ok || info == nil {
+		t.Fatalf("1.7: expected drift when .env is empty but example has keys")
+	}
+	if len(info.MissingKeysInEnv) != 2 {
+		t.Errorf("1.7: expected 2 missing keys, got %d", len(info.MissingKeysInEnv))
 	}
 }
 
@@ -141,12 +153,11 @@ func TestEnvCheck_1_12_ValueDifferencesIgnored(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// 2. DEPENDENCY DRIFT CHECK SCENARIOS (2.1 - 2.12)
+// SECTION 2: DEPENDENCY DRIFT CHECK SCENARIOS (2.1 - 2.12)
 // -----------------------------------------------------------------------------
 
-func TestDepCheck_2_2_LockfileNewerThanModules(t *testing.T) {
+func TestDepCheck_2_1_LockfileMatchesModules(t *testing.T) {
 	tmpDir := t.TempDir()
-
 	pkgPath := filepath.Join(tmpDir, "package.json")
 	lockPath := filepath.Join(tmpDir, "package-lock.json")
 	modPath := filepath.Join(tmpDir, "node_modules")
@@ -155,7 +166,27 @@ func TestDepCheck_2_2_LockfileNewerThanModules(t *testing.T) {
 	_ = os.WriteFile(lockPath, []byte("{}"), 0644)
 	_ = os.Mkdir(modPath, 0755)
 
-	// Set lockfile mtime newer than node_modules
+	now := time.Now()
+	_ = os.Chtimes(pkgPath, now.Add(-10*time.Minute), now.Add(-10*time.Minute))
+	_ = os.Chtimes(lockPath, now.Add(-10*time.Minute), now.Add(-10*time.Minute))
+	_ = os.Chtimes(modPath, now, now)
+
+	drifts, ok := CheckDependencyDrift(tmpDir)
+	if ok && len(drifts) > 0 {
+		t.Errorf("2.1: lockfile matching node_modules should not flag drift")
+	}
+}
+
+func TestDepCheck_2_2_LockfileNewerThanModules(t *testing.T) {
+	tmpDir := t.TempDir()
+	pkgPath := filepath.Join(tmpDir, "package.json")
+	lockPath := filepath.Join(tmpDir, "package-lock.json")
+	modPath := filepath.Join(tmpDir, "node_modules")
+
+	_ = os.WriteFile(pkgPath, []byte("{}"), 0644)
+	_ = os.WriteFile(lockPath, []byte("{}"), 0644)
+	_ = os.Mkdir(modPath, 0755)
+
 	now := time.Now()
 	_ = os.Chtimes(modPath, now.Add(-10*time.Minute), now.Add(-10*time.Minute))
 	_ = os.Chtimes(lockPath, now, now)
@@ -200,8 +231,17 @@ func TestDepCheck_2_5_GoModNewerThanSum(t *testing.T) {
 	}
 }
 
+func TestDepCheck_2_9_NoPackageManagerFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	drifts, ok := CheckDependencyDrift(tmpDir)
+	if ok || len(drifts) > 0 {
+		t.Errorf("2.9: static project with no package files should not flag dependency drift")
+	}
+}
+
 // -----------------------------------------------------------------------------
-// 4. BROKEN SYMLINKS SCENARIOS (4.1 - 4.9)
+// SECTION 4: BROKEN SYMLINKS & DEAD REFERENCES (4.1 - 4.9)
 // -----------------------------------------------------------------------------
 
 func TestBrokenSymlinks_4_1_ValidSymlink(t *testing.T) {
@@ -225,7 +265,7 @@ func TestBrokenSymlinks_4_2_BrokenSymlink(t *testing.T) {
 
 	_ = os.WriteFile(targetFile, []byte("hello"), 0644)
 	_ = os.Symlink("target.txt", linkFile)
-	_ = os.Remove(targetFile) // target is deleted
+	_ = os.Remove(targetFile) // target deleted
 
 	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
 	if !ok || len(broken) == 0 {
@@ -236,8 +276,44 @@ func TestBrokenSymlinks_4_2_BrokenSymlink(t *testing.T) {
 	}
 }
 
+func TestBrokenSymlinks_4_7_NodeModulesSymlinksExcluded(t *testing.T) {
+	tmpDir := t.TempDir()
+	nodeModulesDir := filepath.Join(tmpDir, "node_modules", "pkg")
+	_ = os.MkdirAll(nodeModulesDir, 0755)
+
+	linkFile := filepath.Join(nodeModulesDir, "broken.link")
+	_ = os.Symlink("nonexistent.txt", linkFile)
+
+	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	if ok && len(broken) > 0 {
+		for _, b := range broken {
+			if strings.Contains(b.Path, "node_modules") {
+				t.Errorf("4.7: symlinks inside node_modules must be excluded from scan")
+			}
+		}
+	}
+}
+
+func TestBrokenSymlinks_4_8_GitSymlinksExcluded(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git", "hooks")
+	_ = os.MkdirAll(gitDir, 0755)
+
+	linkFile := filepath.Join(gitDir, "pre-commit")
+	_ = os.Symlink("nonexistent_hook.sh", linkFile)
+
+	broken, ok := CheckBrokenSymlinksAndReferences(tmpDir)
+	if ok && len(broken) > 0 {
+		for _, b := range broken {
+			if strings.Contains(b.Path, ".git") {
+				t.Errorf("4.8: symlinks inside .git directory must be excluded from scan")
+			}
+		}
+	}
+}
+
 // -----------------------------------------------------------------------------
-// 5 & 8. CROSS-CUTTING IDEMPOTENCY & GUARDRAIL SCENARIOS
+// SECTION 5 & 8: CROSS-CUTTING IDEMPOTENCY & GUARDRAILS (5.1 - 8.4)
 // -----------------------------------------------------------------------------
 
 func TestCrossCutting_5_1_Idempotency(t *testing.T) {
@@ -274,13 +350,11 @@ func TestCrossCutting_8_1_ZeroWritesWithoutApply(t *testing.T) {
 
 	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("PORT=5000\n"), 0644)
 
-	// Run without apply
 	rep, _ := me.RunCoreFourMaintenance(ctx, false)
 	if len(rep.RepairsExecuted) > 0 {
 		t.Errorf("8.1: zero writes guardrail violated — repairs executed without --apply flag!")
 	}
 
-	// Verify .env.example was NOT created
 	if _, err := os.Stat(filepath.Join(tmpDir, ".env.example")); err == nil {
 		t.Errorf("8.1: .env.example should NOT be created without --apply flag")
 	}
