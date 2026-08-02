@@ -51,7 +51,14 @@ Daemon implements **24 active engineering pillars** inside a single Go binary:
 
 ### 1. Pillar 24: Engineering Maintenance Engine (`core/maintenance/`)
 - Implemented proactive observation, evidence gathering, and self-healing.
-- Automatically detects missing `.env` files, stale dependencies, dangling Docker containers, and broken symlinks.
+- Enforces strict **Core Four** scope: `.env` key presence, dependency lockfile drift, dangling Docker state (>24h exited containers / >10MB dangling images), broken symlinks & dead references.
+- **The Trust Vision & Manifesto:**
+  1. *Invisible when things are fine, precise when they're not.*
+  2. *Knows the difference between "checked and clean" and "not checked" (Silence Contract).*
+  3. *Never asks for trust — shows empirical evidence (exact file paths, line numbers, key names, sizes).*
+  4. *Mechanical, deterministic, and boring — no guessing, no unrequested value edits.*
+  5. *Read-only until explicitly instructed otherwise (`--apply` is opt-in).*
+  6. *Serves as the trust onboarding for the entire Engineering Operating System.*
 - Exposed via `daemon maintain`, with backward-compatible aliases `daemon care` and `daemon health`.
 
 ### 2. Redesigned Git-Style CLI Hierarchy (`cli/commands/`)
