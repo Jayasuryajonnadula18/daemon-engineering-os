@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"strings"
 
 	engContext "daemon/core/context"
 	"daemon/core/maintenance"
@@ -12,113 +11,143 @@ import (
 )
 
 var (
-	maintainFixFlag     bool
-	maintainAutoFixFlag bool
-	maintainDryRunFlag  bool
-	maintainSchedule    string
+	maintainApplyFlag  bool
+	maintainFixFlag    bool
+	maintainDryRunFlag bool
 )
 
 var maintainCmd = &cobra.Command{
-	Use:     "maintain [category]",
+	Use:     "maintain",
 	Aliases: []string{"care", "health"},
-	Short:   "Perform engineering maintenance and health checks",
-	Long: `The Maintenance Engine continuously monitors, maintains, and cares for the engineering workspace.
-Supports categories: dependencies, containers, kubernetes, cloudflare, database, security, performance, docs, workspace, all.
-You can also invoke this command using its aliases: 'daemon care' or 'daemon health'.`,
+	Short:   "Perform Core Four Workspace Maintenance & Health Analysis",
+	Long: `Daemon Maintenance Engine (Pillar 24) — Core Four Checks:
+  1. Missing / Misconfigured .env vs .env.example (Key presence strictly, zero values)
+  2. Stale / Drifted Dependencies (Lockfile vs install timestamps)
+  3. Dangling Docker State (Exited containers >24h, unreferenced images >10MB)
+  4. Broken Symlinks & Dead References (Repo symlinks pointing to non-existent targets)
+
+Strict Guardrails Enforced:
+  • Never modifies .env values
+  • Never auto-installs dependencies (suggests exact shell command)
+  • Never prunes Docker without --apply and listed inventory
+  • Never touches files outside current project directory
+  • Local-only checks (zero unrequested network calls)`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if maintainSchedule != "" {
-			fmt.Printf("✔ Configured automated maintenance routine on schedule: [%s]\n", strings.ToUpper(maintainSchedule))
-			fmt.Println("  Next execution will run under Policy Engine controlled self-healing.")
-			return
-		}
-
-		category := "all"
-		if len(args) > 0 {
-			category = args[0]
-		}
-
-		autoFix := maintainFixFlag || maintainAutoFixFlag
-		if maintainDryRunFlag {
-			fmt.Println("================================================================================")
-			fmt.Println("=== [DRY-RUN MODE] Previewing Maintenance Engine operations ===")
-			fmt.Println("================================================================================")
-			autoFix = false
-		}
+		applyFix := maintainApplyFlag || maintainFixFlag
 
 		pe := policies.NewMemoryPolicyEngine(maintainDryRunFlag)
 		ce := engContext.NewContextEngine(rt.Container.ResolveGraphStore(), rt.Container.ResolveMemoryStore())
 		me := maintenance.NewMaintenanceEngine(ce, pe)
 
-		rep, err := me.RunMaintenance(cmd.Context(), category, autoFix)
+		report, err := me.RunCoreFourMaintenance(cmd.Context(), applyFix)
 		if err != nil {
-			fmt.Printf("❌ Error running Maintenance Engine: %v\n", err)
+			fmt.Printf("❌ Maintenance Error: %v\n", err)
+			return
+		}
+
+		// SILENCE CONTRACT: If no drift exists, output single clean line
+		if !report.HasDrift && len(report.RepairsExecuted) == 0 {
+			fmt.Println("✔ Workspace maintained — 0 drift incidents detected.")
 			return
 		}
 
 		fmt.Println("================================================================================")
-		fmt.Println("🛠️  DAEMON WORKSPACE MAINTENANCE ENGINE (PILLAR 24)")
+		fmt.Println("🛠️  DAEMON MAINTENANCE ENGINE — CORE FOUR AUDIT")
 		fmt.Println("================================================================================")
-		fmt.Printf("Category:             %s\n", strings.ToUpper(rep.Category))
-		fmt.Printf("Workspace Health:     %s\n", rep.Status)
-		fmt.Printf("Confidence Score:     %d%%\n", rep.ConfidenceScore)
-		fmt.Printf("Est. Developer Saved: %s\n", rep.EstimatedTimeSaved)
-		fmt.Println("--------------------------------------------------------------------------------")
+		fmt.Printf("Checked Directory: %s\n\n", report.CheckedDir)
 
-		fmt.Println("\n🔍 OBSERVATION:")
-		fmt.Printf("  • %s\n", rep.Observation)
+		// 1. Check: Environment Drift
+		if report.EnvDrift != nil {
+			fmt.Println("1️⃣  ENVIRONMENT CONFIGURATION CHECK (.env vs .env.example)")
+			fmt.Println("   • What was checked: Key presence between .env and .env.example (values ignored)")
 
-		fmt.Println("\n📋 EVIDENTIARY AUDIT:")
-		for _, ev := range rep.Evidence {
-			fmt.Printf("  %s\n", ev)
-		}
-
-		if len(rep.IncidentsFound) > 0 {
-			fmt.Println("\n⚠️  FLAGGED INCIDENTS & WORKSPACE DRIFT:")
-			for _, inc := range rep.IncidentsFound {
-				fmt.Printf("  • [%s] Target: %s — %s\n", strings.ToUpper(inc.Severity), inc.Target, inc.Message)
+			if report.EnvDrift.MissingEnvFile {
+				fmt.Println("   • What was found:   ⚠️ .env file is missing!")
+				if len(report.EnvDrift.MissingKeysInEnv) > 0 {
+					fmt.Printf("                       Missing keys required by .env.example: %v\n", report.EnvDrift.MissingKeysInEnv)
+				}
+			} else if report.EnvDrift.MissingExampleFile {
+				fmt.Println("   • What was found:   ⚠️ .env.example template file is missing!")
+				if len(report.EnvDrift.MissingKeysInEx) > 0 {
+					fmt.Printf("                       Keys in .env missing from template: %v\n", report.EnvDrift.MissingKeysInEx)
+				}
+			} else {
+				if len(report.EnvDrift.MissingKeysInEnv) > 0 {
+					fmt.Printf("   • What was found:   ⚠️ Keys present in .env.example but missing in .env: %v\n", report.EnvDrift.MissingKeysInEnv)
+				}
+				if len(report.EnvDrift.MissingKeysInEx) > 0 {
+					fmt.Printf("   • What was found:   ⚠️ Keys present in .env but missing in .env.example: %v\n", report.EnvDrift.MissingKeysInEx)
+				}
 			}
+			fmt.Println("   • Safety/Reversible: Safe & Reversible (Generates/updates key templates without touching values)")
+			fmt.Println()
 		}
 
-		if len(rep.RepairsExecuted) > 0 {
-			fmt.Println("\n⚡ SELF-HEALING REPAIRS EXECUTED:")
-			for _, r := range rep.RepairsExecuted {
+		// 2. Check: Dependency Drift
+		if len(report.DepDrift) > 0 {
+			fmt.Println("2️⃣  DEPENDENCY DRIFT CHECK (Lockfile vs Install Directory)")
+			for _, dep := range report.DepDrift {
+				fmt.Printf("   • What was checked: %s, %s, %s\n", dep.ManifestFile, dep.LockFile, dep.InstallDir)
+				fmt.Printf("   • What was found:   ⚠️ Dependency Drift: %s\n", dep.DriftType)
+				if !dep.LockTime.IsZero() {
+					fmt.Printf("                       Lockfile mod time: %s\n", dep.LockTime.Format("2006-01-02 15:04:05"))
+				}
+				if !dep.InstallTime.IsZero() {
+					fmt.Printf("                       Install mod time:  %s\n", dep.InstallTime.Format("2006-01-02 15:04:05"))
+				}
+				fmt.Printf("   • Suggested Fix:    Run '%s'\n", dep.SuggestCmd)
+				fmt.Println("   • Guardrail:        Daemon does not auto-install dependencies. Please run the suggested command.")
+			}
+			fmt.Println()
+		}
+
+		// 3. Check: Dangling Docker State
+		if len(report.DockerDangling) > 0 {
+			fmt.Println("3️⃣  DANGLING DOCKER STATE CHECK (Exited Containers >24h & Dangling Images)")
+			fmt.Println("   • What was checked: Docker host daemon status (status=exited, dangling=true)")
+			fmt.Println("   • Listed Inventory:")
+			for _, item := range report.DockerDangling {
+				if item.Type == "container" {
+					fmt.Printf("     - Exited Container: ID [%s] Name: %s (Age: %s)\n", item.ID, item.Name, item.Age)
+				} else {
+					fmt.Printf("     - Dangling Image:     ID [%s] Size: %s\n", item.ID, item.Size)
+				}
+			}
+			fmt.Println("   • Safety/Reversible: Irreversible once pruned. Requires explicit '--apply' flag.")
+			if !applyFix {
+				fmt.Println("   • Action Required:   Run 'daemon maintain --apply' to remove this inventory.")
+			}
+			fmt.Println()
+		}
+
+		// 4. Check: Broken Symlinks
+		if len(report.BrokenSymlinks) > 0 {
+			fmt.Println("4️⃣  BROKEN SYMLINKS & DEAD REFERENCES CHECK")
+			fmt.Println("   • What was checked: Repository symlink targets via os.Lstat")
+			for _, sym := range report.BrokenSymlinks {
+				fmt.Printf("   • What was found:   ⚠️ Broken Symlink: '%s' ──> '%s' (%s)\n", sym.Path, sym.Target, sym.Reason)
+			}
+			fmt.Println("   • Safety/Reversible: Reversible by restoring target or recreating symlink.")
+			fmt.Println()
+		}
+
+		// Repairs Executed Output
+		if len(report.RepairsExecuted) > 0 {
+			fmt.Println("⚡ REPAIRS EXECUTED (--apply mode):")
+			for _, r := range report.RepairsExecuted {
 				fmt.Printf("  %s\n", r)
 			}
-		} else if len(rep.SelfHealingActions) > 0 {
-			fmt.Println("\n💡 RECOMMENDED SELF-HEALING ACTIONS:")
-			for _, act := range rep.SelfHealingActions {
-				fmt.Printf("  -> %s\n", act)
-			}
-			if !autoFix {
-				fmt.Println("\n👉 Run 'daemon maintain --fix' to execute these self-healing actions automatically.")
-			}
+			fmt.Println()
 		}
 
-		fmt.Println("\n💡 RECOMMENDATION:")
-		fmt.Printf("  * %s\n", rep.Recommendation)
 		fmt.Println("================================================================================")
 	},
 }
 
 func init() {
-	maintainCmd.Flags().BoolVar(&maintainFixFlag, "fix", false, "Execute approved repair workflows and self-healing")
-	maintainCmd.Flags().BoolVar(&maintainAutoFixFlag, "auto-fix", false, "Execute controlled self-healing routines")
+	maintainCmd.Flags().BoolVar(&maintainApplyFlag, "apply", false, "Execute approved maintenance repairs and Docker pruning")
+	maintainCmd.Flags().BoolVar(&maintainFixFlag, "fix", false, "Alias for --apply")
 	maintainCmd.Flags().BoolVar(&maintainDryRunFlag, "dry-run", false, "Preview maintenance operations without making changes")
-	maintainCmd.Flags().StringVar(&maintainSchedule, "schedule", "", "Configure schedule (daily, weekly, monthly, pre-deploy, post-deploy)")
-
-	// Register subcommands for categories
-	categories := []string{
-		"dependencies", "containers", "kubernetes", "cloudflare",
-		"database", "security", "performance", "docs", "workspace", "all",
-	}
-	for _, cat := range categories {
-		catCmd := &cobra.Command{
-			Use:   cat,
-			Short: fmt.Sprintf("Perform engineering maintenance for %s", cat),
-			Run:   maintainCmd.Run,
-		}
-		maintainCmd.AddCommand(catCmd)
-	}
 
 	rootCmd.AddCommand(maintainCmd)
 }

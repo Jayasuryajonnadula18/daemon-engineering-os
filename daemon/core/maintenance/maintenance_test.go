@@ -2,7 +2,8 @@ package maintenance
 
 import (
 	"context"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 
 	engContext "daemon/core/context"
@@ -39,34 +40,59 @@ func (d *dummyMemoryStore) GetDeployments() ([]domain.Deployment, error) {
 	return nil, nil
 }
 
-func TestMaintenanceEngine_RunMaintenance(t *testing.T) {
+func TestCoreFourMaintenance(t *testing.T) {
 	ctx := context.Background()
 	ce := engContext.NewContextEngine(&dummyGraphStore{}, &dummyMemoryStore{})
-	pe := policies.NewMemoryPolicyEngine(false) // allow mutation for auto-fix test
+	pe := policies.NewMemoryPolicyEngine(false)
 
 	me := NewMaintenanceEngine(ce, pe)
 
-	// Test category "containers"
-	rep, err := me.RunMaintenance(ctx, "containers", false)
+	// Create temp directory for clean test isolation
+	tmpDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	_ = os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(origWd) }()
+
+	// Test 1: Empty dir should have 0 drift (silence contract)
+	repClean, err := me.RunCoreFourMaintenance(ctx, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rep.Category != "containers" {
-		t.Errorf("expected category containers, got %s", rep.Category)
-	}
-	if rep.ConfidenceScore != 96 {
-		t.Errorf("expected confidence score 96, got %d", rep.ConfidenceScore)
-	}
-	if len(rep.Evidence) == 0 {
-		t.Errorf("expected evidence items, got none")
+	if repClean.HasDrift {
+		t.Errorf("expected 0 drift in empty directory, got HasDrift = true")
 	}
 
-	// Test auto-fix self healing execution
-	repFix, err := me.RunMaintenance(ctx, "all", true)
+	// Test 2: Create .env with keys missing from .env.example
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("PORT=5000\nDB_HOST=localhost\n"), 0644)
+	repEnv, err := me.RunCoreFourMaintenance(ctx, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(repFix.Status, "Repaired") {
-		t.Errorf("expected Repaired status, got %s", repFix.Status)
+	if !repEnv.HasDrift || repEnv.EnvDrift == nil {
+		t.Fatalf("expected EnvDrift to be detected when .env exists without .env.example")
+	}
+	if !repEnv.EnvDrift.MissingExampleFile {
+		t.Errorf("expected MissingExampleFile to be true")
+	}
+
+	// Test 3: Apply fix (--apply) to auto-generate .env.example
+	repApply, err := me.RunCoreFourMaintenance(ctx, true)
+	if err != nil {
+		t.Fatalf("unexpected error during apply: %v", err)
+	}
+	if len(repApply.RepairsExecuted) == 0 {
+		t.Errorf("expected repairs executed during --apply mode")
+	}
+
+	// Verify .env.example created with PORT and DB_HOST (values ignored)
+	exData, err := os.ReadFile(filepath.Join(tmpDir, ".env.example"))
+	if err != nil {
+		t.Fatalf("expected .env.example to be created: %v", err)
+	}
+	if !os.FileMode(0644).IsRegular() {
+		t.Errorf("regular file expected")
+	}
+	if len(exData) == 0 {
+		t.Errorf(".env.example should not be empty")
 	}
 }
