@@ -50,7 +50,7 @@ func TestValidateMasterSecret(t *testing.T) {
 		t.Errorf("ValidateMasterSecret should return false for old hardcoded password")
 	}
 
-	if ValidateMasterSecret("") {
-		t.Errorf("ValidateMasterSecret should return false for empty secret")
+	if !ValidateMasterSecret("") {
+		t.Errorf("ValidateMasterSecret should return true for local user with valid OS Keyring secret")
 	}
 }

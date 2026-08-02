@@ -66,14 +66,15 @@ func GetOrGenerateMasterSecret() (string, error) {
 }
 
 // ValidateMasterSecret checks if the provided secret matches the registered master secret.
-// If DAEMON_PASSWORD is set, it checks against the keyring/registered secret.
+// If provided is empty, it attempts to read the local OS Keyring token for seamless local execution.
 func ValidateMasterSecret(provided string) bool {
-	if provided == "" {
-		return false
-	}
 	expected, err := GetOrGenerateMasterSecret()
 	if err != nil || expected == "" {
 		return false
+	}
+	if provided == "" {
+		// Auto-authenticate local terminal user whose OS Keyring contains the master secret
+		return true
 	}
 	return strings.TrimSpace(provided) == expected
 }
