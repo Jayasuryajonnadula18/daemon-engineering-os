@@ -165,6 +165,17 @@ Operating Modes:
 			fmt.Println()
 		}
 
+		// 6. Check: SSH Tunnels & Port Collisions
+		if len(report.SSHTunnels) > 0 {
+			fmt.Println("6️⃣  ACTIVE SSH TUNNEL & PORT COLLISION CHECK")
+			fmt.Println("   • What was checked: Local port bindings (netstat -ano / tasklist)")
+			for _, tun := range report.SSHTunnels {
+				fmt.Printf("   • What was found:   ⚠️ Active SSH Tunnel: %s\n", tun.Details)
+				fmt.Printf("   • Suggested Fix:    Run '%s'\n", tun.SuggestCmd)
+			}
+			fmt.Println()
+		}
+
 		// Repairs Executed Output
 		if len(report.RepairsExecuted) > 0 {
 			fmt.Println("⚡ REPAIRS EXECUTED (--apply mode):")

@@ -64,6 +64,15 @@ type ConflictMarkerInfo struct {
 	Marker     string `json:"marker"`
 }
 
+// SSHTunnelInfo describes an active or orphaned SSH tunnel holding local project ports.
+type SSHTunnelInfo struct {
+	Port       int    `json:"port"`
+	Process    string `json:"process"`
+	PID        string `json:"pid"`
+	Details    string `json:"details"`
+	SuggestCmd string `json:"suggest_cmd"`
+}
+
 // CoreFourReport holds the exact findings for the 58-scenario maintenance spec.
 type CoreFourReport struct {
 	CheckedDir          string               `json:"checked_dir"`
@@ -73,6 +82,7 @@ type CoreFourReport struct {
 	DockerStatusMessage string               `json:"docker_status_message,omitempty"`
 	BrokenSymlinks      []BrokenSymlinkInfo  `json:"broken_symlinks,omitempty"`
 	ConflictMarkers     []ConflictMarkerInfo `json:"conflict_markers,omitempty"`
+	SSHTunnels          []SSHTunnelInfo      `json:"ssh_tunnels,omitempty"`
 	SkippedPaths        []string             `json:"skipped_paths,omitempty"`
 	ErrorsEncountered   []string             `json:"errors_encountered,omitempty"`
 	RepairsExecuted     []string             `json:"repairs_executed,omitempty"`
@@ -502,6 +512,45 @@ func CheckMergeConflictMarkers(root string) ([]ConflictMarkerInfo, bool) {
 	return markers, len(markers) > 0
 }
 
+// CheckSSHTunnelsAndPortCollisions inspects system sockets for active/orphaned SSH tunnel processes holding local ports.
+func CheckSSHTunnelsAndPortCollisions(ctx context.Context) ([]SSHTunnelInfo, bool) {
+	var tunnels []SSHTunnelInfo
+
+	cmd := exec.CommandContext(ctx, "netstat", "-ano")
+	output, err := cmd.Output()
+	if err != nil {
+		return tunnels, false
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, l := range lines {
+		lTrim := strings.TrimSpace(l)
+		if strings.Contains(lTrim, "LISTENING") && (strings.Contains(lTrim, ":22 ") || strings.Contains(lTrim, ":2222 ") || strings.Contains(lTrim, ":5432 ") || strings.Contains(lTrim, ":6379 ")) {
+			parts := strings.Fields(lTrim)
+			if len(parts) >= 5 {
+				addr := parts[1]
+				pid := parts[len(parts)-1]
+
+				taskCmd := exec.CommandContext(ctx, "tasklist", "/FI", fmt.Sprintf("PID eq %s", pid), "/FO", "CSV", "/NH")
+				if taskOut, tErr := taskCmd.Output(); tErr == nil {
+					tStr := strings.ToLower(string(taskOut))
+					if strings.Contains(tStr, "ssh") {
+						tunnels = append(tunnels, SSHTunnelInfo{
+							Port:       22,
+							Process:    "ssh.exe",
+							PID:        pid,
+							Details:    fmt.Sprintf("SSH Tunnel active on %s (PID: %s)", addr, pid),
+							SuggestCmd: fmt.Sprintf("Stop-Process -Id %s -Force", pid),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return tunnels, len(tunnels) > 0
+}
+
 // RunCoreFourMaintenance evaluates all 58 spec scenarios with fault isolation and guardrails.
 func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFix bool) (*CoreFourReport, error) {
 	root, err := os.Getwd()
@@ -584,6 +633,19 @@ func (me *MaintenanceEngine) RunCoreFourMaintenance(ctx context.Context, applyFi
 		}()
 		if conflictItems, ok := CheckMergeConflictMarkers(root); ok {
 			report.ConflictMarkers = conflictItems
+			report.HasDrift = true
+		}
+	}()
+
+	// Item 46: Fault Isolation wrapper for SSH Tunnel Check
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				report.ErrorsEncountered = append(report.ErrorsEncountered, fmt.Sprintf("SSH Tunnel check panic recovered: %v", r))
+			}
+		}()
+		if tunnelItems, ok := CheckSSHTunnelsAndPortCollisions(ctx); ok {
+			report.SSHTunnels = tunnelItems
 			report.HasDrift = true
 		}
 	}()
