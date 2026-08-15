@@ -82,10 +82,23 @@ func (j *JSBugsInstrument) Execute(ctx context.Context, request instruments.Tool
 		content := string(data)
 		filename := filepath.Base(path)
 
-		// 1. SSE/WebSocket Memory Leak (missing .off or removeListener cleanup)
-		if (strings.Contains(content, ".on('") || strings.Contains(content, ".on(\"")) &&
-			!strings.Contains(content, ".off(") &&
-			!strings.Contains(content, "removeListener") {
+		// 1. SSE/WebSocket Memory Leak (missing .off or removeListener cleanup, ignoring commented lines)
+		var hasOn bool
+		var hasOff bool
+		lines := strings.Split(content, "\n")
+		for _, l := range lines {
+			lTrim := strings.TrimSpace(l)
+			if strings.HasPrefix(lTrim, "//") || strings.HasPrefix(lTrim, "/*") || strings.HasPrefix(lTrim, "*") {
+				continue
+			}
+			if strings.Contains(lTrim, ".on(") || strings.Contains(lTrim, ".addListener(") {
+				hasOn = true
+			}
+			if strings.Contains(lTrim, ".off(") || strings.Contains(lTrim, "removeListener(") || strings.Contains(lTrim, "removeAllListeners(") {
+				hasOff = true
+			}
+		}
+		if hasOn && !hasOff {
 			stdout += "SSE_LEAK:" + filename + "\n"
 		}
 
@@ -98,7 +111,7 @@ func (j *JSBugsInstrument) Execute(ctx context.Context, request instruments.Tool
 
 		// 3. Index Key Abuse
 		if (strings.HasSuffix(filename, ".jsx") || strings.HasSuffix(filename, ".tsx")) &&
-			(strings.Contains(content, "key={index}") || strings.Contains(content, "key={idx}")) {
+			(strings.Contains(content, "key={index}") || strings.Contains(content, "key={idx}") || strings.Contains(content, "key={i}")) {
 			stdout += "KEY_ABUSE:" + filename + "\n"
 		}
 
