@@ -48,14 +48,31 @@ type ModelProvider interface {
 }
 
 // Distinct Provider Structs
-type OllamaProvider struct{}
+type OllamaProvider struct {
+	client *OllamaClient
+}
 func (p *OllamaProvider) Name() string { return "Ollama" }
-func (p *OllamaProvider) Available(ctx context.Context) bool { return true }
+func (p *OllamaProvider) Available(ctx context.Context) bool {
+	if p.client == nil {
+		p.client = NewOllamaClient()
+	}
+	return p.client.IsAvailable()
+}
 func (p *OllamaProvider) Generate(ctx context.Context, request ModelRequest) (ModelResponse, error) {
-	return ModelResponse{Text: "Local reasoning output"}, nil
+	if p.client == nil {
+		p.client = NewOllamaClient()
+	}
+	txt, err := p.client.Complete(ctx, request.SystemPrompt, request.Prompt)
+	if err != nil {
+		return ModelResponse{}, err
+	}
+	return ModelResponse{Text: txt}, nil
 }
 func (p *OllamaProvider) GenerateOld(ctx context.Context, prompt string, systemPrompt string) (string, error) {
-	return "Local reasoning output", nil
+	if p.client == nil {
+		p.client = NewOllamaClient()
+	}
+	return p.client.Complete(ctx, systemPrompt, prompt)
 }
 func (p *OllamaProvider) Capability() ModelCapability {
 	return ModelCapability{

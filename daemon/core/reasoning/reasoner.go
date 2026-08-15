@@ -2,7 +2,9 @@ package reasoning
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	corectx "daemon/core/context"
@@ -190,72 +192,225 @@ func NewLLMReasoningEngine(router *ModelRouter) *LLMReasoningEngine {
 }
 
 func (l *LLMReasoningEngine) GenerateHypotheses(ctx context.Context, problem string, evidenceList []instruments.Evidence) ([]debug.Hypothesis, error) {
-	rec := l.router.RouteTask("code_reasoning", 500)
-	provider, exists := l.router.providers[rec.Provider]
-	if !exists {
-		return nil, fmt.Errorf("no provider found for %s", rec.Provider)
+	var evsStr []string
+	for _, ev := range evidenceList {
+		evsStr = append(evsStr, fmt.Sprintf("- Evidence ID: %s, Statement: %s", ev.ID, ev.Statement))
 	}
-	prompt := fmt.Sprintf("Generate engineering hypotheses for: %s", problem)
-	_, err := provider.Generate(ctx, ModelRequest{Prompt: prompt, SystemPrompt: "You are a senior debugging assistant."})
+	evidencePrompt := strings.Join(evsStr, "\n")
+
+	systemPrompt := "You are a senior debugging assistant. You must formulate potential hypotheses that explain the reported problem using the available evidence. You MUST respond with ONLY a valid JSON array of objects matching this schema:\n[\n  {\n    \"id\": \"hyp-custom-id\",\n    \"statement\": \"Detailed statement explaining the failure mode\",\n    \"confidence_score\": 0.8\n  }\n]\nDo not include any conversational filler, markdown syntax blocks, or other text outside the JSON array."
+	prompt := fmt.Sprintf("Problem description: %s\n\nGathered evidence:\n%s\n\nGenerate hypotheses.", problem, evidencePrompt)
+
+	resp, err := l.router.Generate(ctx, "code_reasoning", prompt, systemPrompt)
 	if err != nil {
-		return nil, err
+		return debug.GenerateDeterministicHypotheses(problem, evidenceList), nil
 	}
 
-	return []debug.Hypothesis{
-		{
-			ID:         "hyp-leak-http-body",
-			Statement:  "Unclosed HTTP response bodies are retaining network connection and memory resources.",
-			Confidence: debug.HypothesisConfidence{Score: 0.5, Ceiling: 1.0, Method: "llm"},
-			Conclusion: debug.ConclusionInconclusive,
-			CreatedAt:  time.Now(),
-		},
-	}, nil
+	cleanText := strings.TrimSpace(resp)
+	if strings.HasPrefix(cleanText, "```json") {
+		cleanText = strings.TrimPrefix(cleanText, "```json")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	} else if strings.HasPrefix(cleanText, "```") {
+		cleanText = strings.TrimPrefix(cleanText, "```")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	}
+	cleanText = strings.TrimSpace(cleanText)
+
+	type llmHypothesis struct {
+		ID              string  `json:"id"`
+		Statement       string  `json:"statement"`
+		ConfidenceScore float64 `json:"confidence_score"`
+	}
+
+	var llmHyps []llmHypothesis
+	if err := json.Unmarshal([]byte(cleanText), &llmHyps); err == nil && len(llmHyps) > 0 {
+		var list []debug.Hypothesis
+		for _, lh := range llmHyps {
+			list = append(list, debug.Hypothesis{
+				ID:         lh.ID,
+				Statement:  lh.Statement,
+				Confidence: debug.HypothesisConfidence{Score: lh.ConfidenceScore, Ceiling: 1.0, Method: "llm"},
+				Conclusion: debug.ConclusionInconclusive,
+				CreatedAt:  time.Now(),
+			})
+		}
+		return list, nil
+	}
+
+	return debug.GenerateDeterministicHypotheses(problem, evidenceList), nil
 }
 
 func (l *LLMReasoningEngine) ProposeExperiments(ctx context.Context, hypotheses []debug.Hypothesis, evidence []instruments.Evidence) ([]debug.ExperimentPlan, error) {
-	rec := l.router.RouteTask("code_reasoning", 500)
-	provider, exists := l.router.providers[rec.Provider]
-	if !exists {
-		return nil, fmt.Errorf("no provider found for %s", rec.Provider)
+	var hypsStr []string
+	for _, h := range hypotheses {
+		hypsStr = append(hypsStr, fmt.Sprintf("- Hypothesis ID: %s, Statement: %s", h.ID, h.Statement))
 	}
-	_, err := provider.Generate(ctx, ModelRequest{Prompt: "Propose experiments", SystemPrompt: "You are a senior debugging assistant."})
+	hypsPrompt := strings.Join(hypsStr, "\n")
+
+	systemPrompt := "You are a senior debugging assistant. You must propose experiment plans using the available capabilities (BUILD, UNIT_TESTING, STATIC_ANALYSIS) to narrow down the active hypotheses. You MUST respond with ONLY a valid JSON array of objects matching this schema:\n[\n  {\n    \"id\": \"exp-custom-id\",\n    \"capability\": \"STATIC_ANALYSIS\",\n    \"hypothesis_ids\": [\"hyp-custom-id\"],\n    \"rationale\": \"Why this check is relevant\",\n    \"cost_level\": \"LOW\",\n    \"discrimination\": 0.8\n  }\n]\nDo not include any conversational filler, markdown syntax blocks, or other text outside the JSON array."
+	prompt := fmt.Sprintf("Active hypotheses:\n%s\n\nPropose experiments using available capabilities.", hypsPrompt)
+
+	resp, err := l.router.Generate(ctx, "code_reasoning", prompt, systemPrompt)
 	if err != nil {
-		return nil, err
+		return []debug.ExperimentPlan{}, nil
 	}
 
-	return []debug.ExperimentPlan{
-		{
-			ID:             "exp-static-memory-leak",
-			Capability:     instruments.CapStaticAnalysis,
-			HypothesisIDs:  []string{"hyp-leak-http-body"},
-			Rationale:      "LLM proposed memory leak check",
-			CostLevel:      debug.CostLow,
-			Discrimination: 0.85,
-		},
-	}, nil
+	cleanText := strings.TrimSpace(resp)
+	if strings.HasPrefix(cleanText, "```json") {
+		cleanText = strings.TrimPrefix(cleanText, "```json")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	} else if strings.HasPrefix(cleanText, "```") {
+		cleanText = strings.TrimPrefix(cleanText, "```")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	}
+	cleanText = strings.TrimSpace(cleanText)
+
+	type llmExperimentPlan struct {
+		ID             string   `json:"id"`
+		Capability     string   `json:"capability"`
+		HypothesisIDs  []string `json:"hypothesis_ids"`
+		Rationale      string   `json:"rationale"`
+		CostLevel      string   `json:"cost_level"`
+		Discrimination float64  `json:"discrimination"`
+	}
+
+	var llmPlans []llmExperimentPlan
+	if err := json.Unmarshal([]byte(cleanText), &llmPlans); err == nil && len(llmPlans) > 0 {
+		var plans []debug.ExperimentPlan
+		for _, lp := range llmPlans {
+			var cap instruments.Capability
+			switch lp.Capability {
+			case "BUILD":
+				cap = instruments.CapBuild
+			case "UNIT_TESTING":
+				cap = instruments.CapUnitTesting
+			case "STATIC_ANALYSIS":
+				cap = instruments.CapStaticAnalysis
+			default:
+				cap = instruments.CapStaticAnalysis
+			}
+			plans = append(plans, debug.ExperimentPlan{
+				ID:             lp.ID,
+				Capability:     cap,
+				HypothesisIDs:  lp.HypothesisIDs,
+				Rationale:      lp.Rationale,
+				CostLevel:      debug.CostLevel(lp.CostLevel),
+				Discrimination: lp.Discrimination,
+			})
+		}
+		return plans, nil
+	}
+
+	return []debug.ExperimentPlan{}, nil
 }
 
 func (l *LLMReasoningEngine) ChallengeHypothesis(ctx context.Context, leading debug.Hypothesis, alternatives []debug.Hypothesis) (debug.HypothesisChallenge, error) {
-	rec := l.router.RouteTask("code_reasoning", 500)
-	provider, exists := l.router.providers[rec.Provider]
-	if !exists {
-		return debug.HypothesisChallenge{}, fmt.Errorf("no provider for challenge")
+	var altsStr []string
+	for _, a := range alternatives {
+		altsStr = append(altsStr, fmt.Sprintf("- ID: %s, Statement: %s", a.ID, a.Statement))
 	}
-	_, err := provider.Generate(ctx, ModelRequest{Prompt: "Challenge hypothesis"})
+	altsPrompt := strings.Join(altsStr, "\n")
+
+	systemPrompt := "You are a senior debugging assistant. You must challenge the leading hypothesis by presenting alternative explanations and proposing a falsification plan of experiments (BUILD, UNIT_TESTING, STATIC_ANALYSIS) to disprove it. You MUST respond with ONLY a valid JSON object matching this schema:\n{\n  \"leading_hypothesis\": \"hyp-id\",\n  \"alternatives\": [\"alt-id\"],\n  \"supporting\": [\"ev-id\"],\n  \"contradicting\": [],\n  \"missing\": [],\n  \"falsification_plan\": [\n    {\n      \"id\": \"exp-falsify-id\",\n      \"capability\": \"UNIT_TESTING\",\n      \"hypothesis_ids\": [\"hyp-id\"],\n      \"rationale\": \"Run specific test to disprove leading hypothesis\",\n      \"cost_level\": \"LOW\",\n      \"discrimination\": 0.9\n    }\n  ]\n}\nDo not include any conversational filler, markdown syntax blocks, or other text outside the JSON object."
+	prompt := fmt.Sprintf("Leading hypothesis: %s (%s)\n\nAlternatives:\n%s\n\nChallenge the leading hypothesis.", leading.ID, leading.Statement, altsPrompt)
+
+	resp, err := l.router.Generate(ctx, "code_reasoning", prompt, systemPrompt)
 	if err != nil {
-		return debug.HypothesisChallenge{}, err
+		var alts []string
+		for _, a := range alternatives {
+			alts = append(alts, a.ID)
+		}
+		return debug.HypothesisChallenge{
+			LeadingHypothesis: leading.ID,
+			Alternatives:      alts,
+			Supporting:        leading.SupportingEvidence,
+			Contradicting:     leading.ContradictingEvidence,
+		}, nil
 	}
 
+	cleanText := strings.TrimSpace(resp)
+	if strings.HasPrefix(cleanText, "```json") {
+		cleanText = strings.TrimPrefix(cleanText, "```json")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	} else if strings.HasPrefix(cleanText, "```") {
+		cleanText = strings.TrimPrefix(cleanText, "```")
+		cleanText = strings.TrimSuffix(cleanText, "```")
+	}
+	cleanText = strings.TrimSpace(cleanText)
+
+	type llmExperimentPlan struct {
+		ID             string   `json:"id"`
+		Capability     string   `json:"capability"`
+		HypothesisIDs  []string `json:"hypothesis_ids"`
+		Rationale      string   `json:"rationale"`
+		CostLevel      string   `json:"cost_level"`
+		Discrimination float64  `json:"discrimination"`
+	}
+
+	type llmChallenge struct {
+		LeadingHypothesis string              `json:"leading_hypothesis"`
+		Alternatives      []string            `json:"alternatives"`
+		Supporting        []string            `json:"supporting"`
+		Contradicting     []string            `json:"contradicting"`
+		Missing           []string            `json:"missing"`
+		FalsificationPlan []llmExperimentPlan `json:"falsification_plan"`
+	}
+
+	var lc llmChallenge
+	if err := json.Unmarshal([]byte(cleanText), &lc); err == nil {
+		var plans []debug.ExperimentPlan
+		for _, lp := range lc.FalsificationPlan {
+			var cap instruments.Capability
+			switch lp.Capability {
+			case "BUILD":
+				cap = instruments.CapBuild
+			case "UNIT_TESTING":
+				cap = instruments.CapUnitTesting
+			case "STATIC_ANALYSIS":
+				cap = instruments.CapStaticAnalysis
+			default:
+				cap = instruments.CapStaticAnalysis
+			}
+			plans = append(plans, debug.ExperimentPlan{
+				ID:             lp.ID,
+				Capability:     cap,
+				HypothesisIDs:  lp.HypothesisIDs,
+				Rationale:      lp.Rationale,
+				CostLevel:      debug.CostLevel(lp.CostLevel),
+				Discrimination: lp.Discrimination,
+			})
+		}
+		return debug.HypothesisChallenge{
+			LeadingHypothesis: lc.LeadingHypothesis,
+			Alternatives:      lc.Alternatives,
+			Supporting:        lc.Supporting,
+			Contradicting:     lc.Contradicting,
+			Missing:           lc.Missing,
+			FalsificationPlan: plans,
+		}, nil
+	}
+
+	var alts []string
+	for _, a := range alternatives {
+		alts = append(alts, a.ID)
+	}
 	return debug.HypothesisChallenge{
 		LeadingHypothesis: leading.ID,
-		Alternatives:      []string{},
+		Alternatives:      alts,
 		Supporting:        leading.SupportingEvidence,
 		Contradicting:     leading.ContradictingEvidence,
 	}, nil
 }
 
 func (l *LLMReasoningEngine) ExplainConclusion(ctx context.Context, hypothesis debug.Hypothesis) (string, error) {
-	return "LLM Reasoner verified the hypothesis based on observations.", nil
+	systemPrompt := "You are a senior debugging assistant. Synthesize a concise explanation of why the hypothesis was verified or not based on the gathered evidence."
+	prompt := fmt.Sprintf("Hypothesis: %s (%s)\nConclusion: %s\nSupporting Evidence: %v\n\nExplain the conclusion.", hypothesis.ID, hypothesis.Statement, hypothesis.Conclusion, hypothesis.SupportingEvidence)
+
+	resp, err := l.router.Generate(ctx, "code_reasoning", prompt, systemPrompt)
+	if err != nil {
+		return fmt.Sprintf("Deterministic validation: hypothesis %s verified with conclusion %s", hypothesis.ID, hypothesis.Conclusion), nil
+	}
+	return strings.TrimSpace(resp), nil
 }
 
 // HybridReasoningEngine combines deterministic fallbacks and LLM adapter paths
