@@ -9,6 +9,7 @@ import (
 
 	"daemon/cli/output"
 	"daemon/core/debug"
+	"daemon/core/reasoning"
 	"daemon/core/storage"
 	"github.com/spf13/cobra"
 )
@@ -83,6 +84,13 @@ var debugCmd = &cobra.Command{
 		}
 
 		debugger := debug.NewDebugger(store, nil)
+		if !debugNoLLMFlag {
+			router := reasoning.NewModelRouter(false)
+			deterministicEngine := reasoning.NewDeterministicReasoningEngine()
+			llmEngine := reasoning.NewLLMReasoningEngine(router)
+			hybridEngine := reasoning.NewHybridReasoningEngine(deterministicEngine, llmEngine, true)
+			debugger.SetReasoningEngine(hybridEngine)
+		}
 		invID := fmt.Sprintf("dbg-%d", time.Now().UnixNano())
 
 		// Execute progressive investigation engine
