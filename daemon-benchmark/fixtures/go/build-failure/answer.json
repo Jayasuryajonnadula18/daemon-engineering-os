@@ -1,0 +1,7 @@
+{
+  "root_cause_file": "main.go",
+  "root_cause_line": 5,
+  "failure_class": "compile_failure",
+  "expected_capability": "BUILD",
+  "daemon_should_find": true
+}

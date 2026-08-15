@@ -57,7 +57,7 @@ var initCmd = &cobra.Command{
 
 		eb.Publish(events.Event{
 			Type:      "RepositoryScanned",
-			Payload:   info,
+			Payload:   map[string]any{"name": info.Name, "language": info.Language, "framework": info.Framework},
 			Timestamp: time.Now(),
 		})
 
@@ -69,7 +69,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("✔ Services mapped: %d active services\n", len(info.Services))
 		}
 		fmt.Printf("✔ Dependencies indexed: %d packages\n", len(info.Dependencies))
-		fmt.Println("✔ Engineering Knowledge Graph created successfully in '.daemon/graph.db'")
+		fmt.Println("✔ Engineering Knowledge Graph created successfully in '.daemon/daemon.db'")
 		fmt.Println("✔ Daemon initialized.")
 	},
 }

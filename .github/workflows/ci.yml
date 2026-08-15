@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test-windows:
+    name: build-test-windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: daemon
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+          cache-dependency-path: daemon/go.sum
+
+      - name: Run tests (race detector skipped due to MinGW32 GCC 6.3.0 64-bit limitation)
+        run: go test ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build executable
+        run: go build -o daemon.exe ./...
+
+  race-test-linux:
+    name: race-test-linux
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: daemon
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+          cache-dependency-path: daemon/go.sum
+
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build binary
+        run: go build -o daemon-linux ./...

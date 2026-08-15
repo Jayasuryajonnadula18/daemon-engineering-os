@@ -17,12 +17,18 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.db
+}
+
 // NewSQLiteStore opens or creates a new SQLite database at dbPath and runs table creation queries.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
+	_, _ = db.Exec("PRAGMA journal_mode=WAL;")
+	_, _ = db.Exec("PRAGMA busy_timeout=5000;")
 
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS nodes (

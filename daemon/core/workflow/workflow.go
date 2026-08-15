@@ -84,7 +84,7 @@ func (e *MemoryWorkflowEngine) Execute(ctx context.Context, id string) error {
 
 	e.eventBus.Publish(events.Event{
 		Type:      "WorkflowStarted",
-		Payload:   wf,
+		Payload:   map[string]any{"workflow_id": wf.ID, "name": wf.Name, "status": wf.Status},
 		Timestamp: time.Now(),
 	})
 
@@ -107,7 +107,7 @@ func (e *MemoryWorkflowEngine) Execute(ctx context.Context, id string) error {
 
 	e.eventBus.Publish(events.Event{
 		Type:      "WorkflowCompleted",
-		Payload:   wf,
+		Payload:   map[string]any{"workflow_id": wf.ID, "name": wf.Name, "status": wf.Status},
 		Timestamp: time.Now(),
 	})
 

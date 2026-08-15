@@ -1,11 +1,16 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"daemon/cli/output"
+	"daemon/core/orchestration"
 	"github.com/spf13/cobra"
 )
+
+var impactJSONFlag bool
 
 var impactCmd = &cobra.Command{
 	Use:   "impact [node]",
@@ -14,73 +19,29 @@ var impactCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		nodeTarget := strings.ToLower(strings.TrimSpace(args[0]))
 
-		fmt.Printf("=== DEPENDENCY IMPACT ANALYSIS: %s ===\n\n", strings.ToUpper(nodeTarget))
+		impactEng := orchestration.NewImpactEngine(nil)
+		analysis, err := impactEng.AnalyzeImpact(context.Background(), nodeTarget)
 
-		gs := rt.Container.ResolveGraphStore()
-		allEdges, err := gs.GetEdges()
-		if err != nil {
-			fmt.Printf("Error accessing Knowledge Graph: %v\n", err)
+		if impactJSONFlag {
+			output.RenderJSON("impact", analysis, err)
 			return
 		}
 
-		allNodes, _ := gs.GetAllNodes()
-
-		// Real Graph Edge Traversal
-		var directDependents []string // Node is target (other nodes call/depend on target)
-		var directDependencies []string // Target calls/depends on other nodes
-
-		for _, e := range allEdges {
-			fromLower := strings.ToLower(e.FromID)
-			toLower := strings.ToLower(e.ToID)
-
-			if strings.Contains(toLower, nodeTarget) || strings.Contains(strings.ToLower(e.ToType), nodeTarget) {
-				directDependents = append(directDependents, fmt.Sprintf("%s (%s -> %s)", e.FromID, e.FromType, e.Relation))
-			}
-			if strings.Contains(fromLower, nodeTarget) || strings.Contains(strings.ToLower(e.FromType), nodeTarget) {
-				directDependencies = append(directDependencies, fmt.Sprintf("%s (%s -> %s)", e.ToID, e.ToType, e.Relation))
-			}
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
 		}
 
-		// Calculate Risk Level based on inbound dependent count
-		riskLevel := "Low"
-		switch {
-		case len(directDependents) >= 3:
-			riskLevel = "Critical (Single Point of Failure for down-stream consumers)"
-		case len(directDependents) == 2:
-			riskLevel = "High (Tight coupling with multiple service consumers)"
-		case len(directDependents) == 1:
-			riskLevel = "Medium (Downstream impact on 1 consumer)"
-		}
-
-		fmt.Println("Direct Dependents (Consumers / Inbound Edges):")
-		if len(directDependents) > 0 {
-			for _, dep := range directDependents {
-				fmt.Printf("  • %s\n", dep)
-			}
-		} else {
-			fmt.Println("  (None detected — standalone component or leaf node)")
-		}
-
-		fmt.Println("\nDirect Dependencies (Outbound Edges):")
-		if len(directDependencies) > 0 {
-			for _, dep := range directDependencies {
-				fmt.Printf("  • %s\n", dep)
-			}
-		} else {
-			fmt.Println("  (No outbound graph edges registered for this node)")
-		}
-
-		fmt.Println("\nKnowledge Graph Context:")
-		fmt.Printf("  • Total Tracked Graph Nodes: %d\n", len(allNodes))
-		fmt.Printf("  • Total Relational Edges:    %d\n", len(allEdges))
-
-		fmt.Println("\nDynamic Risk Assessment:")
-		fmt.Printf("  • Calculated Impact Risk:    %s\n", riskLevel)
-		fmt.Printf("  • Inbound Degree Centrality: %d\n", len(directDependents))
-		fmt.Println("  • Rollback Strategy:         Atomic image/container snapshot revert via 'daemon fix --rollback'")
+		fmt.Printf("=== DEPENDENCY IMPACT ANALYSIS: %s ===\n\n", strings.ToUpper(nodeTarget))
+		fmt.Printf("Target Entity:        %s\n", analysis.TargetEntity)
+		fmt.Printf("Blast Radius Score:   %.0f/100\n", analysis.BlastRadiusScore)
+		fmt.Printf("Calculated Risk:      %s\n", analysis.RiskLevel)
+		fmt.Printf("Affected Services:    %v\n", analysis.AffectedServices)
+		fmt.Printf("Single Points Fail:   %v\n", analysis.SinglePointsOfFailure)
 	},
 }
 
 func init() {
+	impactCmd.Flags().BoolVar(&impactJSONFlag, "json", false, "Output machine-readable JSON")
 	rootCmd.AddCommand(impactCmd)
 }

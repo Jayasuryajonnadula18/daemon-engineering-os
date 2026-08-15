@@ -1,12 +1,14 @@
 import { ExecutionPlan, ExecutionPlanStep, ProjectContext, StartupOptions } from '../types';
+import { loadDaemonConfig } from '../utils/config';
 
 export class PlanningEngine {
-  buildExecutionPlan(context: ProjectContext, options: StartupOptions = {}): ExecutionPlan {
+  async buildExecutionPlan(context: ProjectContext, options: StartupOptions = {}): Promise<ExecutionPlan> {
+    const config = await loadDaemonConfig(context.root);
     const steps: ExecutionPlanStep[] = [];
 
     steps.push({
       title: 'Verify runtime',
-      description: `Ensure Node.js is available for ${context.framework || 'the current project'}`,
+      description: `Ensure the detected runtime is available for ${context.framework || 'the current project'}`,
       action: 'verify',
       command: 'node --version',
       confidence: 95,
@@ -35,7 +37,7 @@ export class PlanningEngine {
           title: 'Install dependencies',
           description: 'Ensure project dependencies are installed before starting the app',
           action: 'install',
-          command: `${context.packageManager || 'npm'} install`,
+          command: `${context.packageManager || 'install'} install`,
           confidence: 90,
         });
       }
@@ -125,7 +127,7 @@ export class PlanningEngine {
     }
 
     if (typeof scripts.dev === 'string' && !this.isSelfBootstrappingScript(scripts.dev)) {
-      return `${context.packageManager || 'npm'} run dev`;
+      return `${context.packageManager ? `${context.packageManager} run dev` : 'npm run dev'}`;
     }
 
     return undefined;

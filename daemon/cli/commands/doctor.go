@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"time"
 
+	"daemon/cli/output"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +33,13 @@ func CheckPortListening(port int) bool {
 	return true
 }
 
+var doctorJSONFlag bool
+
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Perform Engineering Diagnostics and Health analysis",
 	Run: func(cmd *cobra.Command, args []string) {
 		re := rt.Container.ResolveReasoningEngine()
-
-		fmt.Println("Running real-time engineering diagnostics...")
 
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -119,6 +120,35 @@ var doctorCmd = &cobra.Command{
 			techDebt = "Medium"
 		}
 
+		if doctorJSONFlag {
+			data := map[string]interface{}{
+				"project":         filepath.Base(cwd),
+				"health_score":    healthScore,
+				"readiness_score": readinessScore,
+				"tech_debt":       techDebt,
+				"findings":        findings,
+				"recommendations": recommendations,
+				"toolchain": map[string]interface{}{
+					"go":     goOk,
+					"node":   nodeOk,
+					"docker": dockerOk,
+					"git":    gitOk,
+					"ollama": ollamaOk,
+				},
+				"services": map[string]interface{}{
+					"ollama_11434":   ollamaListening,
+					"postgres_5432":  postgresListening,
+					"redis_6379":     redisListening,
+					"tracked_count":  len(services),
+					"deps_count":     len(deps),
+				},
+			}
+			output.RenderJSON("doctor", data, nil)
+			return
+		}
+
+		fmt.Println("Running real-time engineering diagnostics...")
+
 		fmt.Println("\n=========================================")
 		fmt.Println("ENGINEERING HEALTH REPORT (LIVE DIAGNOSTICS)")
 		fmt.Println("=========================================")
@@ -167,5 +197,6 @@ var doctorCmd = &cobra.Command{
 }
 
 func init() {
+	doctorCmd.Flags().BoolVar(&doctorJSONFlag, "json", false, "Output machine-readable JSON")
 	rootCmd.AddCommand(doctorCmd)
 }

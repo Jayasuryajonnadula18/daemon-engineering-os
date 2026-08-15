@@ -1,0 +1,7 @@
+{
+  "root_cause_file": "main.go",
+  "root_cause_line": 6,
+  "failure_class": "resource_leak",
+  "expected_capability": "STATIC_ANALYSIS",
+  "daemon_should_find": true
+}

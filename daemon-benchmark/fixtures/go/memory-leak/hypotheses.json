@@ -1,0 +1,7 @@
+{
+  "competing": [
+    {"id": "hyp-leak-http-body", "correct": true, "expected_confidence": ">0.85"},
+    {"id": "hyp-leak-goroutine", "correct": false, "expected_confidence": "<0.3"},
+    {"id": "hyp-generic-regression", "correct": false, "expected_confidence": "<0.3"}
+  ]
+}

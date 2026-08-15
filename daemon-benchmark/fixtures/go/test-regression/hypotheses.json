@@ -1,0 +1,7 @@
+{
+  "competing": [
+    {"id": "hyp-test-regression", "correct": true, "expected_confidence": ">0.85"},
+    {"id": "hyp-build-syntax", "correct": false, "expected_confidence": "<0.3"},
+    {"id": "hyp-generic-regression", "correct": false, "expected_confidence": "<0.3"}
+  ]
+}

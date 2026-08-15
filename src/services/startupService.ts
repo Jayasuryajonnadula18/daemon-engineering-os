@@ -3,6 +3,7 @@ import { ExecutionPlan, ProjectContext, StartupOptions, StartupResult } from '..
 import { PlanningEngine } from '../core/planningEngine';
 import { StorageService } from './storageService';
 import { waitForPort } from '../utils/ports';
+import { loadDaemonConfig } from '../utils/config';
 import chalk from 'chalk';
 import ora from 'ora';
 
@@ -12,7 +13,7 @@ export class StartupService {
 
   async start(context: ProjectContext, options: StartupOptions = {}): Promise<StartupResult> {
     const spinner = ora({ text: 'Building project startup plan...', color: 'cyan' }).start();
-    const plan = this.planningEngine.buildExecutionPlan(context, options);
+    const plan = await this.planningEngine.buildExecutionPlan(context, options);
     spinner.succeed('Startup plan ready');
 
     await this.storage.writeExecutionPlan(plan);
@@ -35,7 +36,8 @@ export class StartupService {
       try {
         if (step.action === 'start' && step.expectedPorts && step.expectedPorts.length > 0) {
           const subprocess = execa(step.command, { shell: true, stdio: 'inherit' });
-          const portsReady = await Promise.all(step.expectedPorts.map((port) => waitForPort(port, 15000)));
+          const config = await loadDaemonConfig(context.root);
+          const portsReady = await Promise.all(step.expectedPorts.map((port) => waitForPort(port, config.startupPortTimeoutMs)));
 
           if (!portsReady.every(Boolean)) {
             subprocess.kill('SIGTERM');

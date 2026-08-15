@@ -1,0 +1,7 @@
+{
+  "root_cause_file": "main.go",
+  "root_cause_line": 4,
+  "failure_class": "test_failure",
+  "expected_capability": "UNIT_TESTING",
+  "daemon_should_find": true
+}

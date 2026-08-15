@@ -68,6 +68,90 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+export async function detectProjectLanguages(root: string, packageJson: Record<string, unknown> = {}): Promise<string[]> {
+  const languages = new Set<string>();
+
+  if (packageJson && Object.keys(packageJson).length > 0) {
+    languages.add('JavaScript');
+  }
+
+  if (await exists(path.join(root, 'tsconfig.json'))) {
+    languages.add('TypeScript');
+  } else if (
+    packageJson &&
+    typeof packageJson === 'object' &&
+    ((packageJson as Record<string, unknown>).dependencies && typeof (packageJson as Record<string, unknown>).dependencies === 'object' && 'typescript' in ((packageJson as Record<string, unknown>).dependencies as Record<string, unknown>)) ||
+    ((packageJson as Record<string, unknown>).devDependencies && typeof (packageJson as Record<string, unknown>).devDependencies === 'object' && 'typescript' in ((packageJson as Record<string, unknown>).devDependencies as Record<string, unknown>))
+  ) {
+    languages.add('TypeScript');
+  }
+
+  if (await exists(path.join(root, 'go.mod'))) {
+    languages.add('Go');
+  }
+
+  if (
+    await exists(path.join(root, 'pyproject.toml')) ||
+    await exists(path.join(root, 'requirements.txt')) ||
+    await exists(path.join(root, 'setup.py')) ||
+    await exists(path.join(root, 'Pipfile'))
+  ) {
+    languages.add('Python');
+  }
+
+  return Array.from(languages);
+}
+
+export async function resolveProjectRoot(startPath: string, gitRoot?: string): Promise<string> {
+  const candidates = [startPath];
+
+  if (gitRoot) {
+    candidates.push(gitRoot);
+  }
+
+  for (const candidate of candidates) {
+    const current = path.resolve(candidate);
+    const markers = [
+      path.join(current, 'package.json'),
+      path.join(current, 'tsconfig.json'),
+      path.join(current, 'go.mod'),
+      path.join(current, 'pyproject.toml'),
+      path.join(current, 'requirements.txt'),
+      path.join(current, 'setup.py'),
+      path.join(current, 'Pipfile'),
+    ];
+
+    const hasMarkers = await Promise.all(markers.map((marker) => exists(marker)));
+    if (hasMarkers.some(Boolean)) {
+      return current;
+    }
+  }
+
+  let current = path.resolve(startPath);
+  let parent = path.dirname(current);
+  while (parent !== current) {
+    const markers = [
+      path.join(current, 'package.json'),
+      path.join(current, 'tsconfig.json'),
+      path.join(current, 'go.mod'),
+      path.join(current, 'pyproject.toml'),
+      path.join(current, 'requirements.txt'),
+      path.join(current, 'setup.py'),
+      path.join(current, 'Pipfile'),
+    ];
+
+    const hasMarkers = await Promise.all(markers.map((marker) => exists(marker)));
+    if (hasMarkers.some(Boolean)) {
+      return current;
+    }
+
+    current = parent;
+    parent = path.dirname(current);
+  }
+
+  return gitRoot ? path.resolve(gitRoot) : path.resolve(startPath);
+}
+
 export class DiscoveryEngine {
   async discover(): Promise<ProjectContext> {
     const root = await this.resolveRoot();
@@ -77,6 +161,7 @@ export class DiscoveryEngine {
     const envSummary = await getEnvSummary();
 
     const dependencies = normalizePackageDependencies(packageJson);
+    const languages = await detectProjectLanguages(root, packageJson);
     const framework = this.detectFramework(dependencies, packageJson);
     const packageManager = await this.detectPackageManager(root, packageJson);
     const packageManagerLock = await this.detectLockFile(root);
@@ -93,8 +178,8 @@ export class DiscoveryEngine {
       name: packageJson.name || path.basename(root),
       root,
       framework,
-      languages: ['JavaScript', 'TypeScript'],
-      runtimes: [nodeSummary.version],
+      languages,
+      runtimes: this.detectRuntimes(languages, nodeSummary),
       packageManager,
       packageManagerLock,
       docker: requiresDocker,
@@ -116,9 +201,9 @@ export class DiscoveryEngine {
       name: packageJson.name || path.basename(root),
       root,
       framework,
-      languages: ['JavaScript', 'TypeScript'],
-      runtimes: [nodeSummary.version],
-      packageManager: packageManager || 'npm',
+      languages,
+      runtimes: this.detectRuntimes(languages, nodeSummary),
+      packageManager,
       packageManagerLock,
       docker: requiresDocker,
       git: gitSummary.repository !== 'Not a git repository',
@@ -140,13 +225,13 @@ export class DiscoveryEngine {
     try {
       const gitSummary = await getGitSummary();
       if (gitSummary.repository && gitSummary.repository !== 'Not a git repository') {
-        return gitSummary.repository;
+        return resolveProjectRoot(process.cwd(), gitSummary.repository);
       }
     } catch {
       // fallback to cwd
     }
 
-    return process.cwd();
+    return resolveProjectRoot(process.cwd());
   }
 
   private async loadPackageJson(root: string): Promise<any> {
@@ -278,6 +363,26 @@ export class DiscoveryEngine {
 
     const packagesDir = path.join(root, 'packages');
     return await exists(packagesDir);
+  }
+
+  private detectRuntimes(languages: string[], nodeSummary: { version?: string }): string[] {
+    const runtimes: string[] = [];
+
+    if (languages.includes('JavaScript') || languages.includes('TypeScript')) {
+      if (nodeSummary.version) {
+        runtimes.push(`Node.js ${nodeSummary.version}`);
+      }
+    }
+
+    if (languages.includes('Go')) {
+      runtimes.push('Go');
+    }
+
+    if (languages.includes('Python')) {
+      runtimes.push('Python');
+    }
+
+    return runtimes;
   }
 
   private detectPorts(pkg: any): number[] {

@@ -40,11 +40,13 @@ var missionControlCmd = &cobra.Command{
 
 		fmt.Printf("✔ Starting Mission Control Web Server on http://%s...\n", addr)
 
-		server := missioncontrol.NewServer(rt, addr)
-		if err := server.Start(); err != nil {
+		server := missioncontrol.NewServer(rt, "127.0.0.1", 8080)
+		boundURI, err := server.Start()
+		if err != nil {
 			fmt.Printf("Error starting Mission Control server: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Printf("✔ Mission Control active at %s\n", boundURI)
 	},
 }
 

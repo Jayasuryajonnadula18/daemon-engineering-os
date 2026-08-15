@@ -29,7 +29,7 @@ export async function runCLI(argv: string[]) {
 
   program
     .command('doctor')
-    .description('Run a health check across Git, Docker, Node, npm, and system status')
+    .description('Run a health check across the detected project runtime, dependencies, and system status')
     .action(async () => {
       await runDoctor();
     });

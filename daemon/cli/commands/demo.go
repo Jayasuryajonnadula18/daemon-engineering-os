@@ -105,7 +105,7 @@ var demoCmd = &cobra.Command{
 		for _, e := range eventsList {
 			eb.Publish(events.Event{
 				Type:      e.Type,
-				Payload:   e.Payload,
+				Payload:   map[string]any{"data": e.Payload},
 				Timestamp: time.Now().Add(-15 * time.Minute),
 			})
 		}

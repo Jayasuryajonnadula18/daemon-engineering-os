@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -192,9 +193,43 @@ func CheckEnvironmentDrift(root string) (*EnvDriftInfo, bool) {
 	return info, true
 }
 
+type dependencyHashState struct {
+	PackageJSONHash string `json:"package_json_hash,omitempty"`
+	PackageLockHash string `json:"package_lock_hash,omitempty"`
+	GoModHash       string `json:"go_mod_hash,omitempty"`
+	GoSumHash       string `json:"go_sum_hash,omitempty"`
+}
+
+func readDependencyHashState(root string) (dependencyHashState, bool) {
+	statePath := filepath.Join(root, ".daemon", "dependency-hash-state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return dependencyHashState{}, false
+	}
+	var state dependencyHashState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return dependencyHashState{}, false
+	}
+	return state, true
+}
+
+func saveDependencyHashState(root string, state dependencyHashState) error {
+	stateDir := filepath.Join(root, ".daemon")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return err
+	}
+	statePath := filepath.Join(stateDir, "dependency-hash-state.json")
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(statePath, data, 0o644)
+}
+
 // CheckDependencyDrift detects lockfile drift using content hashes, missing venvs, and conflicting lockfiles.
 func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	var drifts []DepDriftInfo
+	state, hasState := readDependencyHashState(root)
 
 	// Item 24: Ambiguous Multiple Lockfiles Check
 	hasNpmLock := false
@@ -234,33 +269,24 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	lockPath := filepath.Join(root, "package-lock.json")
 	modulesPath := filepath.Join(root, "node_modules")
 
-	pkgStat, pkgErr := os.Stat(pkgPath)
-	lockStat, lockErr := os.Stat(lockPath)
-	modStat, modErr := os.Stat(modulesPath)
+	_, pkgErr := os.Stat(pkgPath)
+	_, lockErr := os.Stat(lockPath)
+	_, modErr := os.Stat(modulesPath)
 
 	if pkgErr == nil && lockErr == nil {
-		if modErr == nil && lockStat.ModTime().After(modStat.ModTime()) {
-			drifts = append(drifts, DepDriftInfo{
-				ManifestFile: "package.json",
-				LockFile:     "package-lock.json",
-				InstallDir:   "node_modules",
-				LockTime:     lockStat.ModTime(),
-				InstallTime:  modStat.ModTime(),
-				DriftType:    "lockfile is newer than node_modules install directory",
-				SuggestCmd:   "npm install",
-			})
-		}
-		// Item 22: Content-hash check to prevent mtime-only false positives from git-restore
-		if pkgStat.ModTime().After(lockStat.ModTime()) {
-			// Read package.json hash vs lockfile package name match
-			drifts = append(drifts, DepDriftInfo{
-				ManifestFile: "package.json",
-				LockFile:     "package-lock.json",
-				ManifestTime: pkgStat.ModTime(),
-				LockTime:     lockStat.ModTime(),
-				DriftType:    "package.json modified after package-lock.json",
-				SuggestCmd:   "npm install",
-			})
+		pkgHash, pkgHashOk := ComputeFileHash(pkgPath)
+		lockHash, lockHashOk := ComputeFileHash(lockPath)
+		if pkgHashOk && lockHashOk {
+			if hasState {
+				if state.PackageJSONHash != "" && state.PackageLockHash != "" && pkgHash != state.PackageJSONHash && lockHash == state.PackageLockHash {
+					drifts = append(drifts, DepDriftInfo{
+						ManifestFile: "package.json",
+						LockFile:     "package-lock.json",
+						DriftType:    "package.json content changed since last known good lockfile state",
+						SuggestCmd:   "npm install",
+					})
+				}
+			}
 		}
 	} else if pkgErr == nil && modErr != nil {
 		drifts = append(drifts, DepDriftInfo{
@@ -274,19 +300,21 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 	// Check Go: go.mod vs go.sum
 	goModPath := filepath.Join(root, "go.mod")
 	goSumPath := filepath.Join(root, "go.sum")
-	goModStat, goModErr := os.Stat(goModPath)
-	goSumStat, goSumErr := os.Stat(goSumPath)
+	_, goModErr := os.Stat(goModPath)
+	_, goSumErr := os.Stat(goSumPath)
 
 	if goModErr == nil && goSumErr == nil {
-		if goModStat.ModTime().After(goSumStat.ModTime()) {
-			drifts = append(drifts, DepDriftInfo{
-				ManifestFile: "go.mod",
-				LockFile:     "go.sum",
-				ManifestTime: goModStat.ModTime(),
-				LockTime:     goSumStat.ModTime(),
-				DriftType:    "go.mod modified after go.sum",
-				SuggestCmd:   "go mod download",
-			})
+		goModHash, goModHashOk := ComputeFileHash(goModPath)
+		goSumHash, goSumHashOk := ComputeFileHash(goSumPath)
+		if hasState && goModHashOk && goSumHashOk {
+			if state.GoModHash != "" && state.GoSumHash != "" && goModHash != state.GoModHash && goSumHash == state.GoSumHash {
+				drifts = append(drifts, DepDriftInfo{
+					ManifestFile: "go.mod",
+					LockFile:     "go.sum",
+					DriftType:    "go.mod content changed since last known good go.sum state",
+					SuggestCmd:   "go mod download",
+				})
+			}
 		}
 	}
 
@@ -318,6 +346,28 @@ func CheckDependencyDrift(root string) ([]DepDriftInfo, bool) {
 				SuggestCmd:   suggestCmd,
 			})
 		}
+	}
+
+	if len(drifts) == 0 {
+		pkgHash, pkgHashOk := ComputeFileHash(filepath.Join(root, "package.json"))
+		lockHash, lockHashOk := ComputeFileHash(filepath.Join(root, "package-lock.json"))
+		goModHash, goModHashOk := ComputeFileHash(filepath.Join(root, "go.mod"))
+		goSumHash, goSumHashOk := ComputeFileHash(filepath.Join(root, "go.sum"))
+
+		stateToPersist := dependencyHashState{}
+		if pkgHashOk {
+			stateToPersist.PackageJSONHash = pkgHash
+		}
+		if lockHashOk {
+			stateToPersist.PackageLockHash = lockHash
+		}
+		if goModHashOk {
+			stateToPersist.GoModHash = goModHash
+		}
+		if goSumHashOk {
+			stateToPersist.GoSumHash = goSumHash
+		}
+		_ = saveDependencyHashState(root, stateToPersist)
 	}
 
 	return drifts, len(drifts) > 0
@@ -362,7 +412,14 @@ func CheckDockerDanglingState(ctx context.Context) ([]DockerDanglingItem, string
 			}
 
 			// Item 33: Project-scoped container filter (only flag project containers or compose containers)
-			if strings.Contains(strings.ToLower(cName), projectName) || strings.Contains(cLabels, projectName) || cLabels == "" {
+			// Exclude Compose-managed containers from dangling container scan
+			if strings.Contains(cLabels, "com.docker.compose.project") {
+				continue
+			}
+
+			// Strict project-scoped container filter
+			matchesProject := strings.Contains(strings.ToLower(cName), projectName) || strings.Contains(strings.ToLower(cLabels), projectName)
+			if matchesProject {
 				if strings.Contains(cStatus, "Exited") && (strings.Contains(cStatus, "days") || strings.Contains(cStatus, "weeks") || strings.Contains(cStatus, "hours")) {
 					items = append(items, DockerDanglingItem{
 						ID:         cID,

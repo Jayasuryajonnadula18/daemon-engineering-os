@@ -1,3 +1,4 @@
+
 import boxen, { Options as BoxenOptions } from 'boxen';
 import chalk from 'chalk';
 import Table from 'cli-table3';
@@ -55,10 +56,10 @@ export function renderDoctorReport(report: DoctorReport): void {
     { label: 'Version', value: report.docker.version || 'N/A' },
   ]);
 
-  renderSection('Node & npm', [
+  renderSection('Runtime', [
     { label: 'Node.js version', value: report.node.version },
-    { label: 'npm version', value: report.node.npmVersion },
-    { label: 'Package manager', value: report.node.packageManager || 'npm' },
+    { label: 'Package manager', value: report.node.packageManager || 'Unknown' },
+    { label: 'Package manager version', value: report.node.packageManagerVersion || report.node.npmVersion || 'Unavailable' },
   ]);
 
   renderSection('Environment', [

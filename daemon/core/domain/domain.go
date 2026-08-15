@@ -2,6 +2,15 @@ package domain
 
 import "time"
 
+// Provenance represents origin, freshness, confidence, and scope metadata for an observation.
+type Provenance struct {
+	Source     string    `json:"source"`
+	ObservedAt time.Time `json:"observed_at"`
+	Freshness  string    `json:"freshness"`  // e.g., "live", "cached", "stale"
+	Confidence float64   `json:"confidence"` // 0.0 - 1.0
+	Scope      string    `json:"scope"`      // e.g., "project", "global", "module"
+}
+
 // Repository represents a version control repository.
 type Repository struct {
 	ID        string    `json:"id"`
@@ -155,5 +164,26 @@ type EdgeRecord struct {
 	ToType   string `json:"to_type"`
 	ToID     string `json:"to_id"`
 	Relation string `json:"relation"`
+}
+
+// Fact represents an observed fact used during evaluation or CLI questioning
+type Fact struct {
+	Statement   string   `json:"statement"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
+type Inference struct {
+	Statement  string  `json:"statement"`
+	Confidence float64 `json:"confidence"`
+}
+
+// ReasoningResult encapsulates the output of the reasoning engine
+type ReasoningResult struct {
+	Answer              string      `json:"answer"`
+	Confidence          float64     `json:"confidence"`
+	InsufficientContext bool        `json:"insufficient_context"`
+	Facts               []Fact      `json:"facts"`
+	Inferences          []Inference `json:"inferences"`
+	Unknowns            []string    `json:"unknowns"`
 }
 

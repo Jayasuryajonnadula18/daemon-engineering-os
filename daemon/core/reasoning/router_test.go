@@ -4,22 +4,24 @@ import (
 	"testing"
 )
 
-func TestModelRouter(t *testing.T) {
-	mrOnline := NewModelRouter(false)
-	mrOffline := NewModelRouter(true)
+func TestModelRouter_TaskAwareSelection(t *testing.T) {
+	mr := NewModelRouter(false)
 
-	recOffline := mrOffline.RouteTask("planning", 100)
-	if recOffline.ModelName != "qwen3-coder-ollama" || !recOffline.Offline {
-		t.Errorf("expected offline Ollama model, got %s", recOffline.ModelName)
+	recCode := mr.RouteTask("code_reasoning", 5000)
+	if recCode.Provider != "Anthropic" {
+		t.Fatalf("expected Anthropic provider for code_reasoning, got %s", recCode.Provider)
+	}
+	if !recCode.Capability.CodeReasoning {
+		t.Fatalf("expected CodeReasoning capability to be true")
 	}
 
-	recOnline := mrOnline.RouteTask("planning", 2000)
-	if recOnline.ModelName != "claude-3-5-sonnet" || recOnline.Provider != "Anthropic" {
-		t.Errorf("expected Sonnet model, got %s", recOnline.ModelName)
+	recArch := mr.RouteTask("architecture_analysis", 150000)
+	if recArch.Provider != "Gemini" {
+		t.Fatalf("expected Gemini provider for long-context architecture analysis, got %s", recArch.Provider)
 	}
 
-	recDoc := mrOnline.RouteTask("documentation", 500)
-	if recDoc.ModelName != "gemini-1-5-pro" {
-		t.Errorf("expected Gemini model, got %s", recDoc.ModelName)
+	recPrivacy := mr.RouteTask("privacy_sensitive", 1000)
+	if recPrivacy.Provider != "Ollama" || !recPrivacy.Offline {
+		t.Fatalf("expected Ollama offline provider for privacy sensitive task, got %s", recPrivacy.Provider)
 	}
 }

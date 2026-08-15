@@ -94,3 +94,11 @@ func (t *TwinModel) Search(ctx context.Context, query string) ([]SearchResult, e
 	return results, nil
 }
 
+// UpdateIncremental applies a real-time event mutation to the twin model in SQLite.
+func (t *TwinModel) UpdateIncremental(ctx context.Context, entityType string, id string, name string, attrs map[string]string) error {
+	if t.graphStore == nil {
+		return nil
+	}
+	return t.graphStore.AddNode(entityType, id, name, attrs)
+}
+

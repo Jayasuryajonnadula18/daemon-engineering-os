@@ -35,8 +35,14 @@ const recoveryRules: RecoveryRule[] = [
     safe: true,
     confidence: 95,
     condition: (ctx) => Boolean(ctx.context.packageManager && ctx.context.packageJson?.dependencies && Object.keys(ctx.context.packageJson.dependencies).length > 0),
-    description: (ctx) => `Run ${ctx.context.packageManager || 'npm'} install to ensure dependencies are available for startup and verification tasks.`,
-    command: (ctx) => `${ctx.context.packageManager || 'npm'} install`,
+    description: (ctx) => {
+      const packageManager = ctx.context.packageManager || ctx.nodeSummary.packageManager || 'npm';
+      return `Run ${packageManager} install to ensure dependencies are available for startup and verification tasks.`;
+    },
+    command: (ctx) => {
+      const packageManager = ctx.context.packageManager || ctx.nodeSummary.packageManager || 'npm';
+      return `${packageManager} install`;
+    },
   },
   {
     id: 'recover.git',

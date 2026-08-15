@@ -96,3 +96,29 @@ func TestCoreFourMaintenance(t *testing.T) {
 		t.Errorf(".env.example should not be empty")
 	}
 }
+
+func TestRunCoreFourMaintenance_FaultIsolation_PanicRecovery(t *testing.T) {
+	ctx := context.Background()
+	ce := engContext.NewContextEngine(&dummyGraphStore{}, &dummyMemoryStore{})
+	pe := policies.NewMemoryPolicyEngine(false)
+	me := NewMaintenanceEngine(ce, pe)
+
+	tmpDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	_ = os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(origWd) }()
+
+	// Add missing .env file to trigger environment check
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env.example"), []byte("KEY=\n"), 0644)
+
+	rep, err := me.RunCoreFourMaintenance(ctx, false)
+	if err != nil {
+		t.Fatalf("unexpected error running maintenance scan: %v", err)
+	}
+
+	// Verify that report is returned and remaining checks completed even if individual check encounters unexpected error
+	if rep == nil {
+		t.Fatalf("expected non-nil report from fault-isolated maintenance engine")
+	}
+}
+

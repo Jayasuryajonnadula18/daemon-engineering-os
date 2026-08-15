@@ -45,8 +45,9 @@ const healthRules: HealthRule[] = [
     id: 'node.missing',
     title: 'Node.js not available',
     severity: 'critical',
-    condition: (ctx) => !ctx.nodeSummary.version,
-    detail: () => 'Node.js is required for JavaScript and TypeScript projects.',
+    condition: (ctx) =>
+      (ctx.context.languages.includes('JavaScript') || ctx.context.languages.includes('TypeScript')) && !ctx.nodeSummary.version,
+    detail: () => 'Node.js is required for the detected JavaScript or TypeScript project.',
     recommendation: () => 'Install Node.js and make it available on PATH.',
   },
   {

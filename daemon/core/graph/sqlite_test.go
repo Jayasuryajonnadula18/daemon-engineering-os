@@ -9,7 +9,7 @@ import (
 
 func TestSQLiteStore_BasicNodesAndEdges(t *testing.T) {
 	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "graph.db")
+	dbPath := filepath.Join(tempDir, "daemon.db")
 
 	store, err := NewSQLiteStore(dbPath)
 	if err != nil {

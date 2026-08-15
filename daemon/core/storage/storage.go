@@ -1,9 +1,14 @@
 package storage
 
 import (
+	"database/sql"
 	"daemon/core/domain"
 	"time"
 )
+
+type DatabaseProvider interface {
+	DB() *sql.DB
+}
 
 // GraphStore defines methods to write and read the Engineering Knowledge Graph.
 type GraphStore interface {

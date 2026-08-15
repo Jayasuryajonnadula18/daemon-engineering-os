@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { Daemon } from '../core/daemon';
+import { PolicyEngine } from '../core/policyEngine';
 import ora from 'ora';
 import { execa } from 'execa';
 import { writeFile } from 'fs/promises';
@@ -8,14 +9,18 @@ export async function runRecover(): Promise<void> {
   console.log(chalk.cyan.bold('Recovering project issues...'));
 
   const daemon = new Daemon();
+  const policyEngine = new PolicyEngine();
   const { recoveryPlan } = await daemon.recover();
   let executedCount = 0;
 
   for (const action of recoveryPlan.actions) {
     console.log(chalk.cyan(`› ${action.title}`));
     console.log(chalk.gray(`  ${action.description}`));
-    if (!action.safe) {
-      console.log(chalk.yellow('  Skipped unsafe recovery action.'));
+
+    // Evaluate action strictly against Policy Engine before proceeding
+    const policy = policyEngine.evaluateAction(action);
+    if (policy.decision === 'deny') {
+      console.log(chalk.yellow(`  Skipped action (${policy.reason})`));
       continue;
     }
 

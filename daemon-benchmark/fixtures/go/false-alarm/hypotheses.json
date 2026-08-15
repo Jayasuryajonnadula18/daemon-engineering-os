@@ -1,0 +1,5 @@
+{
+  "competing": [
+    {"id": "hyp-leak-http-body", "correct": false, "expected_confidence": "<0.4"}
+  ]
+}

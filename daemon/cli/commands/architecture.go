@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"daemon/cli/output"
 	"daemon/core/architecture"
 
 	"github.com/spf13/cobra"
 )
+
+var architectureJSONFlag bool
 
 var architectureCmd = &cobra.Command{
 	Use:   "architecture",
@@ -15,6 +18,12 @@ var architectureCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		engine := architecture.NewEngine(rt.Container.ResolveGraphStore())
 		report, err := engine.Analyze(context.Background())
+
+		if architectureJSONFlag {
+			output.RenderJSON("architecture", report, err)
+			return
+		}
+
 		if err != nil {
 			fmt.Printf("Error analyzing architecture: %v\n", err)
 			return
@@ -47,6 +56,7 @@ var architectureCmd = &cobra.Command{
 }
 
 func init() {
+	architectureCmd.Flags().BoolVar(&architectureJSONFlag, "json", false, "Output machine-readable JSON")
 	rootCmd.AddCommand(architectureCmd)
 }
 

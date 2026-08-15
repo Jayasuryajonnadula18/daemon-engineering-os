@@ -25,7 +25,7 @@ func main() {
 
 	daemonDir := filepath.Join(cwd, ".daemon")
 	_ = os.MkdirAll(daemonDir, 0755)
-	dbPath := filepath.Join(daemonDir, "graph.db")
+	dbPath := filepath.Join(daemonDir, "daemon.db")
 
 	// Instantiate concrete stores & core engines
 	dbStore, err := graph.NewSQLiteStore(dbPath)

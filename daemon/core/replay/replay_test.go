@@ -13,7 +13,7 @@ func TestReplayEngine(t *testing.T) {
 
 	eb.Publish(events.Event{
 		Type:      "DeploymentExecuted",
-		Payload:   "Payments deployment completed",
+		Payload:   map[string]any{"message": "Payments deployment completed"},
 		Timestamp: time.Now(),
 	})
 

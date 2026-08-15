@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
-// Event represents a system event inside the Daemon Runtime.
+// Event represents a normalized system event inside the Daemon Runtime.
 type Event struct {
-	Type      string      `json:"type"`
-	Payload   interface{} `json:"payload"`
-	Timestamp time.Time   `json:"timestamp"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Source    string         `json:"source"`
+	EntityID  string         `json:"entity_id"`
+	Timestamp time.Time      `json:"timestamp"`
+	Payload   map[string]any `json:"payload"`
 }
 
 // EventBus provides pub/sub and timeline retrieval for internal events.

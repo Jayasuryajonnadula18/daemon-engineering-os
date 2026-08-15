@@ -16,6 +16,7 @@ export interface NodeSummary {
   version: string;
   npmVersion: string;
   packageManager?: string;
+  packageManagerVersion?: string;
 }
 
 export interface EnvSummary {
