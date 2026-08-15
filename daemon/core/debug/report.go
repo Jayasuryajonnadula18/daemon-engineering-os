@@ -39,6 +39,16 @@ func RenderStdout(inv *Investigation) string {
 		for _, rec := range inv.Recommendations {
 			sb.WriteString(fmt.Sprintf("- %s\n", rec))
 		}
+		sb.WriteString("\n")
+	}
+
+	if len(inv.Logs) > 0 {
+		sb.WriteString("PROGRESSION LOGS\n")
+		sb.WriteString("--------------------------------------------------\n")
+		for _, log := range inv.Logs {
+			sb.WriteString(fmt.Sprintf("%s\n", log))
+		}
+		sb.WriteString("\n")
 	}
 
 	return sb.String()

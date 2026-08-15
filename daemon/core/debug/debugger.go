@@ -121,6 +121,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 	startTime := time.Now()
 
 	// ── Stage 1: Triage ───────────────────────────────────────────────────────
+	inv.Log("Stage 1: Initiating Triage & Workspace Discovery...")
 	inv.Iterations++
 	if err := inv.Transition(StateEvidenceCollection); err != nil {
 		return nil, err
@@ -128,6 +129,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 
 	filesCount := countSourceFiles(projectDir)
 	inv.FilesInspected = filesCount
+	inv.Log(fmt.Sprintf("Scanned workspace files: found %d source files.", filesCount))
 
 	// Hard Invariant: no workspace evidence → INSUFFICIENT_CONTEXT.
 	// Never manufacture a root cause from nothing.
@@ -162,6 +164,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 	}
 
 	// ── Stage 2: Localization ─────────────────────────────────────────────────
+	inv.Log("Stage 2: Localizing configuration and running active checks...")
 	if err := inv.Transition(StateLocalization); err != nil {
 		return nil, err
 	}
@@ -222,6 +225,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 			}
 		}
 	}
+	inv.Log(fmt.Sprintf("Triage complete. Gathered %d engineering evidence items.", len(inv.Evidence)))
 
 	if inv.CheckBudget(time.Since(startTime)) {
 		_ = d.store.SaveInvestigation(inv)
@@ -230,8 +234,10 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 
 	// Plan strategy based on problem description and gathered evidence
 	strategy := d.planner.PlanStrategy(problem, inv.Evidence)
+	inv.Log(fmt.Sprintf("Stage 3: Planning investigation strategy. Chosen strategy: %s", strategy))
 
 	// ── Stage 3: Hypothesis Testing ───────────────────────────────────────────
+	inv.Log("Formulating hypotheses and testing core assumptions...")
 	if err := inv.Transition(StateHypothesisTesting); err != nil {
 		return nil, err
 	}
@@ -285,6 +291,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 			inv.Hypotheses = append(inv.Hypotheses, hyp)
 		}
 	}
+	inv.Log(fmt.Sprintf("Formulated %d active hypotheses for the target problem.", len(inv.Hypotheses)))
 
 	if inv.CheckBudget(time.Since(startTime)) {
 		_ = d.store.SaveInvestigation(inv)
@@ -296,6 +303,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 	// It uses ExperimentSelector → capability → InstrumentSelector → execution.
 	// The native checks above always run first as cheap initial triage.
 	if d.experimentSelector != nil && d.registry != nil && d.executor != nil {
+		inv.Log("Stage 4: Executing experiment-driven verification plans...")
 		executedFingerprints := make(map[string]bool)
 
 		for {
@@ -321,6 +329,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 			// Delegate to InstrumentSelector: find the best available instrument
 			// that provides the required capability in this environment.
 			selection := d.selectInstrument(ctx, experiment.Capability, projectDir)
+			inv.Log(fmt.Sprintf("Selected experiment: %s (Capability: %s) for active hypotheses", experiment.ID, experiment.Capability))
 
 			if !selection.Availability.CapabilityAvailable {
 				// No instrument available for this experiment in this environment.
@@ -362,12 +371,14 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 
 			// Check early exit: a verified root cause has been established.
 			if d.hasVerifiedCause(inv) {
+				inv.Log("Early exit: verified root cause established.")
 				break
 			}
 		}
 	}
 
 	// Falsification Challenge Phase: attempt to disprove the leading hypothesis
+	inv.Log("Stage 5: Starting Falsification Challenge Phase...")
 	var leadingHyp *Hypothesis
 	var alternatives []Hypothesis
 	for i := range inv.Hypotheses {
@@ -401,7 +412,8 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 		}
 	}
 
-	// ── Stage 5: Verification ─────────────────────────────────────────────────
+	// ── Stage 6: Verification ─────────────────────────────────────────────────
+	inv.Log("Stage 6: Finalizing diagnostics and compiling report...")
 	if err := inv.Transition(StateVerification); err != nil {
 		return nil, err
 	}

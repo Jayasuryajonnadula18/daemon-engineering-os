@@ -2,6 +2,7 @@ package debug
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"daemon/core/analysis"
@@ -117,6 +118,7 @@ type Investigation struct {
 	TestsExecuted       int                  `json:"tests_executed"`
 	AIRequestsCount     int                  `json:"ai_requests_count"`
 	DurationMs          int64                `json:"duration_ms"`
+	Logs                []string             `json:"logs"`
 }
 
 func NewInvestigation(id, problem string, budget DebugBudget) *Investigation {
@@ -130,7 +132,14 @@ func NewInvestigation(id, problem string, budget DebugBudget) *Investigation {
 		Evidence:   []instruments.Evidence{},
 		RootCauses: []RootCause{},
 		Budget:     budget,
+		Logs:       []string{},
 	}
+}
+
+func (inv *Investigation) Log(msg string) {
+	formatted := fmt.Sprintf("[*] %s", msg)
+	inv.Logs = append(inv.Logs, formatted)
+	fmt.Fprintln(os.Stderr, formatted)
 }
 
 // Transition performs state transition checks and updates the status
