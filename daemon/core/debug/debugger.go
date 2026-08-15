@@ -241,28 +241,44 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 		allHyps = GenerateDeterministicHypotheses(problem, inv.Evidence)
 	}
 
-	// Filter hypotheses to keep only those aligned with the planned strategy
+	// Filter hypotheses to keep only those aligned with the planned strategy or supported by existing evidence
 	for _, hyp := range allHyps {
 		isAligned := false
-		switch strategy {
-		case StrategyMemory:
-			if hyp.ID == "hyp-leak-http-body" || hyp.ID == "hyp-leak-goroutine" {
+
+		// Keep hypotheses that have supporting evidence in the current evidence list
+		for _, ev := range inv.Evidence {
+			if ev.ID == "ev-js-crash-desc" && hyp.ID == "hyp-build-syntax" {
 				isAligned = true
 			}
-		case StrategyCrash, StrategyBuildFailure:
-			if hyp.ID == "hyp-build-syntax" {
+			if ev.ID == "ev-js-sse-leak" && hyp.ID == "hyp-leak-http-body" {
 				isAligned = true
 			}
-		case StrategyTestFailure:
-			if hyp.ID == "hyp-test-regression" {
+			if (ev.ID == "ev-js-key-abuse" || ev.ID == "ev-js-infinite-loop") && hyp.ID == "hyp-generic-regression" {
 				isAligned = true
 			}
-		case StrategyRegression, StrategyGeneric:
-			if hyp.ID == "hyp-generic-regression" {
+		}
+
+		if !isAligned {
+			switch strategy {
+			case StrategyMemory:
+				if hyp.ID == "hyp-leak-http-body" || hyp.ID == "hyp-leak-goroutine" {
+					isAligned = true
+				}
+			case StrategyCrash, StrategyBuildFailure:
+				if hyp.ID == "hyp-build-syntax" {
+					isAligned = true
+				}
+			case StrategyTestFailure:
+				if hyp.ID == "hyp-test-regression" {
+					isAligned = true
+				}
+			case StrategyRegression, StrategyGeneric:
+				if hyp.ID == "hyp-generic-regression" {
+					isAligned = true
+				}
+			default:
 				isAligned = true
 			}
-		default:
-			isAligned = true
 		}
 
 		if isAligned {
