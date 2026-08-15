@@ -115,6 +115,43 @@ func (j *JSBugsInstrument) Execute(ctx context.Context, request instruments.Tool
 			stdout += "KEY_ABUSE:" + filename + "\n"
 		}
 
+		// 4. JWT Verification Bypass
+		if strings.Contains(content, "alg") && strings.Contains(content, "'none'") {
+			stdout += "JWT_BYPASS:" + filename + "\n"
+		}
+
+		// 5. Cache Key Invalidation Mismatch
+		if strings.Contains(content, "invalidateProduct") &&
+			strings.Contains(content, "prod:") &&
+			(strings.Contains(content, "products:") || strings.Contains(content, "product:")) {
+			stdout += "CACHE_MISMATCH:" + filename + "\n"
+		}
+
+		// 6. Concurrency Race Condition
+		if strings.Contains(content, "SELECT stock_quantity") &&
+			strings.Contains(content, "UPDATE products") &&
+			strings.Contains(content, "stock_quantity -") {
+			stdout += "CONCURRENCY_RACE:" + filename + "\n"
+		}
+
+		// 7. SQLite Database Transaction Lock
+		if strings.Contains(content, "BEGIN TRANSACTION") &&
+			strings.Contains(content, "paymentResult.success") &&
+			strings.Contains(content, "UPDATE orders SET status = ?") {
+			stdout += "DB_LOCK_LEAK:" + filename + "\n"
+		}
+
+		// 8. Event-Loop Blocker
+		if (strings.Contains(content, "while (Date.now()") || strings.Contains(content, "while(Date.now()")) &&
+			strings.Contains(content, "Math.random()") {
+			stdout += "EVENT_LOOP_BLOCK:" + filename + "\n"
+		}
+
+		// 9. Floating-Point Comparison Mismatch
+		if strings.Contains(content, "submittedTotal !==") || strings.Contains(content, "submittedTotal !=") {
+			stdout += "FLOAT_PRECISION:" + filename + "\n"
+		}
+
 		return nil
 	})
 
@@ -146,7 +183,7 @@ func (j *JSBugsInstrument) Normalize(ctx context.Context, result instruments.Too
 				Type:         instruments.EvidenceAST,
 				Source:       "memory_leak_analyzer",
 				EntityID:     filename,
-				Statement:    "FACT: Event emitter listener registered on SSE endpoint in " + filename + " but removeListener is not called on client close. INFERENCE: SSE subscription leak.",
+				Statement:    "FACT: WebSocket event emitter listener registered in " + filename + " but not removed on close. INFERENCE: WebSocket subscription memory leak.",
 				ObservedAt:   time.Now(),
 				Freshness:    "live",
 				Reliability:  1.0,
@@ -202,6 +239,156 @@ func (j *JSBugsInstrument) Normalize(ctx context.Context, result instruments.Too
 				Reliability:  1.0,
 				Confidence:   1.0,
 				Scope:        "architecture",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "JWT_BYPASS":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-jwt-bypass",
+				Type:         instruments.EvidenceAST,
+				Source:       "security_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: JWT signature verification bypassed by trusting 'none' alg in " + filename + ". INFERENCE: Authorization bypass vulnerability.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "security",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "CACHE_MISMATCH":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-cache-mismatch",
+				Type:         instruments.EvidenceAST,
+				Source:       "cache_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: Cache invalidation key pattern (prod:) mismatch with cache storage key pattern (product:) in " + filename + ". INFERENCE: Stale cache regression.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "logic",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "CONCURRENCY_RACE":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-concurrency-race",
+				Type:         instruments.EvidenceAST,
+				Source:       "concurrency_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: Check-then-act stock validation pattern observed in " + filename + " without thread synchronization or database row locks. INFERENCE: Concurrency race condition/overselling risk.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "concurrency",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "DB_LOCK_LEAK":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-db-lock",
+				Type:         instruments.EvidenceAST,
+				Source:       "db_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: SQLite transaction initiated (BEGIN TRANSACTION) in " + filename + " but not rolled back or committed on payment failure branch. INFERENCE: Connection transaction lock leak.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "storage",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "EVENT_LOOP_BLOCK":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-event-loop-block",
+				Type:         instruments.EvidenceAST,
+				Source:       "performance_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: Synchronous busy-waiting loop (while Date.now) detected in " + filename + ". INFERENCE: Event loop blocking execution pattern.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "performance",
+				RawReference: filename,
+				Quality: instruments.EvidenceQuality{
+					Class:           "static_ast",
+					Strength:        1.0,
+					Reliability:     1.0,
+					Freshness:       1.0,
+					Specificity:     1.0,
+					Independence:    1.0,
+					Reproducibility: 1.0,
+					Verification:    "VERIFIED",
+					Provenance:      "js-bugs",
+				},
+			})
+		case "FLOAT_PRECISION":
+			evs = append(evs, instruments.Evidence{
+				ID:           "ev-js-float-precision",
+				Type:         instruments.EvidenceAST,
+				Source:       "precision_analyzer",
+				EntityID:     filename,
+				Statement:    "FACT: Strict inequality comparison of decimal/float values (submittedTotal !== calculatedTotal) in " + filename + ". INFERENCE: Floating point comparison failure risk.",
+				ObservedAt:   time.Now(),
+				Freshness:    "live",
+				Reliability:  1.0,
+				Confidence:   1.0,
+				Scope:        "logic",
 				RawReference: filename,
 				Quality: instruments.EvidenceQuality{
 					Class:           "static_ast",

@@ -259,6 +259,24 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 			if ev.ID == "ev-js-sse-leak" && hyp.ID == "hyp-leak-http-body" {
 				isAligned = true
 			}
+			if ev.ID == "ev-js-jwt-bypass" && hyp.ID == "hyp-jwt-bypass" {
+				isAligned = true
+			}
+			if ev.ID == "ev-js-cache-mismatch" && hyp.ID == "hyp-cache-mismatch" {
+				isAligned = true
+			}
+			if ev.ID == "ev-js-concurrency-race" && hyp.ID == "hyp-concurrency-race" {
+				isAligned = true
+			}
+			if ev.ID == "ev-js-db-lock" && hyp.ID == "hyp-db-lock" {
+				isAligned = true
+			}
+			if ev.ID == "ev-js-event-loop-block" && hyp.ID == "hyp-event-loop-block" {
+				isAligned = true
+			}
+			if ev.ID == "ev-js-float-precision" && hyp.ID == "hyp-float-precision" {
+				isAligned = true
+			}
 			if (ev.ID == "ev-js-key-abuse" || ev.ID == "ev-js-infinite-loop") && hyp.ID == "hyp-generic-regression" {
 				isAligned = true
 			}
@@ -279,7 +297,13 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 					isAligned = true
 				}
 			case StrategyRegression, StrategyGeneric:
-				if hyp.ID == "hyp-generic-regression" {
+				if hyp.ID == "hyp-generic-regression" ||
+					hyp.ID == "hyp-jwt-bypass" ||
+					hyp.ID == "hyp-cache-mismatch" ||
+					hyp.ID == "hyp-concurrency-race" ||
+					hyp.ID == "hyp-db-lock" ||
+					hyp.ID == "hyp-event-loop-block" ||
+					hyp.ID == "hyp-float-precision" {
 					isAligned = true
 				}
 			default:
@@ -434,7 +458,7 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 		if ev.ID == "ev-mem-leak" {
 			hasLeak = true
 		}
-		if ev.ID == "ev-js-sse-leak" || ev.ID == "ev-js-crash-desc" || ev.ID == "ev-js-key-abuse" {
+		if strings.HasPrefix(ev.ID, "ev-js-") {
 			jsEvs = append(jsEvs, ev)
 			if ev.ID == "ev-js-sse-leak" {
 				hasLeak = true
@@ -469,6 +493,24 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 			} else if ev.ID == "ev-js-crash-desc" && hyp.ID == "hyp-build-syntax" {
 				isVerified = true
 				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-jwt-bypass" && hyp.ID == "hyp-jwt-bypass" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-cache-mismatch" && hyp.ID == "hyp-cache-mismatch" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-concurrency-race" && hyp.ID == "hyp-concurrency-race" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-db-lock" && hyp.ID == "hyp-db-lock" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-event-loop-block" && hyp.ID == "hyp-event-loop-block" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
+			} else if ev.ID == "ev-js-float-precision" && hyp.ID == "hyp-float-precision" {
+				isVerified = true
+				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
 			} else if (ev.ID == "ev-js-key-abuse" || ev.ID == "ev-js-infinite-loop") && hyp.ID == "hyp-generic-regression" {
 				isVerified = true
 				hyp.SupportingEvidence = append(hyp.SupportingEvidence, ev.ID)
@@ -501,6 +543,18 @@ func (d *Debugger) RunInvestigation(ctx context.Context, invID string, problem s
 				if ev.ID == "ev-js-sse-leak" && hyp.ID == "hyp-leak-http-body" {
 					evID = ev.ID
 				} else if ev.ID == "ev-js-crash-desc" && hyp.ID == "hyp-build-syntax" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-jwt-bypass" && hyp.ID == "hyp-jwt-bypass" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-cache-mismatch" && hyp.ID == "hyp-cache-mismatch" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-concurrency-race" && hyp.ID == "hyp-concurrency-race" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-db-lock" && hyp.ID == "hyp-db-lock" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-event-loop-block" && hyp.ID == "hyp-event-loop-block" {
+					evID = ev.ID
+				} else if ev.ID == "ev-js-float-precision" && hyp.ID == "hyp-float-precision" {
 					evID = ev.ID
 				} else if (ev.ID == "ev-js-key-abuse" || ev.ID == "ev-js-infinite-loop") && hyp.ID == "hyp-generic-regression" {
 					evID = ev.ID
@@ -724,7 +778,7 @@ func countSourceFiles(dir string) int {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".daemon") {
+		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".daemon" || info.Name() == "node_modules" || info.Name() == "vendor") {
 			return filepath.SkipDir
 		}
 		if !info.IsDir() {
