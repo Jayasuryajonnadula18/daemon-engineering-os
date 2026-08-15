@@ -82,22 +82,23 @@ func (j *JSBugsInstrument) Execute(ctx context.Context, request instruments.Tool
 		content := string(data)
 		filename := filepath.Base(path)
 
-		// 1. SSE Memory Leak
-		if filename == "server.js" && strings.Contains(content, "/api/events") {
-			if strings.Contains(content, "addListener") && !strings.Contains(content, "removeListener") {
-				stdout += "SSE_LEAK:" + filename + "\n"
-			}
+		// 1. SSE/WebSocket Memory Leak (missing .off or removeListener cleanup)
+		if (strings.Contains(content, ".on('") || strings.Contains(content, ".on(\"")) &&
+			!strings.Contains(content, ".off(") &&
+			!strings.Contains(content, "removeListener") {
+			stdout += "SSE_LEAK:" + filename + "\n"
 		}
 
-		// 2. Empty Description Crash
-		if filename == "server.js" && strings.Contains(content, "description") && strings.Contains(content, ".length") {
-			if !strings.Contains(content, "typeof description") && !strings.Contains(content, "description &&") {
-				stdout += "DESC_CRASH:" + filename + "\n"
-			}
+		// 2. Empty Description/Property Crash
+		if strings.Contains(content, "description.length") &&
+			!strings.Contains(content, "description &&") &&
+			!strings.Contains(content, "typeof description") {
+			stdout += "DESC_CRASH:" + filename + "\n"
 		}
 
 		// 3. Index Key Abuse
-		if strings.Contains(content, "key={index}") || strings.Contains(content, "key={idx}") {
+		if (strings.HasSuffix(filename, ".jsx") || strings.HasSuffix(filename, ".tsx")) &&
+			(strings.Contains(content, "key={index}") || strings.Contains(content, "key={idx}")) {
 			stdout += "KEY_ABUSE:" + filename + "\n"
 		}
 
