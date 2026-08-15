@@ -10,6 +10,7 @@ import (
 	"daemon/cli/output"
 	"daemon/core/agent"
 	"daemon/core/policies"
+	"daemon/core/reasoning"
 	"daemon/core/resource"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +58,11 @@ var agentRunCmd = &cobra.Command{
 			}
 		}
 
-		runtime := agent.NewAgentRuntime(pe, gov, nil, sessionStore)
+		router := reasoning.NewModelRouter(false)
+		deterministicEngine := reasoning.NewDeterministicReasoningEngine()
+		llmEngine := reasoning.NewLLMReasoningEngine(router)
+		hybridEngine := reasoning.NewHybridReasoningEngine(deterministicEngine, llmEngine, true)
+		runtime := agent.NewAgentRuntimeWithInstruments(pe, gov, sessionStore, nil, nil, hybridEngine)
 		sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
 
 		// Configure custom budget from CLI flags
@@ -232,7 +237,11 @@ var agentResumeCmd = &cobra.Command{
 			pe = rt.Container.ResolvePolicyEngine()
 		}
 
-		runtime := agent.NewAgentRuntime(pe, gov, nil, sessionStore)
+		router := reasoning.NewModelRouter(false)
+		deterministicEngine := reasoning.NewDeterministicReasoningEngine()
+		llmEngine := reasoning.NewLLMReasoningEngine(router)
+		hybridEngine := reasoning.NewHybridReasoningEngine(deterministicEngine, llmEngine, true)
+		runtime := agent.NewAgentRuntimeWithInstruments(pe, gov, sessionStore, nil, nil, hybridEngine)
 		resSess, err := runtime.RunLoop(context.Background(), s.ID, s.Intent, false)
 		if err != nil {
 			if agentJSONFlag {
